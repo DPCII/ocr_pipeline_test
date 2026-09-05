@@ -1,0 +1,23 @@
+[project]
+name = "ocr-pipeline-test"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "dpcii", email = "clausewitzian@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "docling>=2.126.0",
+    "httpx>=0.28.1",
+    "pillow>=12.3.0",
+    "pymupdf>=1.28.2",
+    "python-dotenv>=1.2.3",
+]
+
+[project.scripts]
+ocr-pipeline-test = "ocr_pipeline_test:main"
+
+[build-system]
+requires = ["uv_build>=0.12.9,<0.13.0"]
+build-backend = "uv_build"

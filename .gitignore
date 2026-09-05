@@ -1,0 +1,16 @@
+# Environment variables
+.env
+*.env
+.env.*
+
+# Python virtual environments & packages
+.venv/
+__pycache__/
+*.pyc
+
+# Package manager dirs
+.pixi/
+
+# Generated outputs
+outputs/
+test_sips.png
