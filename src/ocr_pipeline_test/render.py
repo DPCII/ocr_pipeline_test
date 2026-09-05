@@ -6,6 +6,14 @@ from typing import Any
 import pymupdf
 
 
+def get_pdf_page_count(pdf_path: Path | str) -> int:
+    """Return total number of pages in the PDF."""
+    doc = pymupdf.open(str(pdf_path))
+    count = len(doc)
+    doc.close()
+    return count
+
+
 def render_page_to_png_bytes(pdf_path: Path | str, page_number: int = 0, dpi: int = 200) -> bytes:
     """Render a specific page of a PDF file to PNG bytes at the specified DPI."""
     doc = pymupdf.open(str(pdf_path))
@@ -41,14 +49,21 @@ def get_reference_layout_blocks(pdf_path: Path | str, page_number: int = 0) -> l
     """Extract ground-truth visual bounding boxes and text blocks from the PDF for structural reference."""
     doc = pymupdf.open(str(pdf_path))
     page = doc[page_number]
-    raw_blocks = page.get_text("blocks")
+    raw_blocks: Any = page.get_text("blocks")
     doc.close()
 
-    blocks = []
+    blocks: list[dict[str, Any]] = []
     for b in raw_blocks:
-        blocks.append({
-            "bbox": (round(b[0], 1), round(b[1], 1), round(b[2], 1), round(b[3], 1)),
-            "text": b[4].strip(),
-            "block_type": b[6],  # 0 for text, 1 for image
-        })
+        if isinstance(b, (list, tuple)) and len(b) >= 7:
+            x0, y0, x1, y1, text, _block_no, block_type = b[:7]
+            blocks.append({
+                "bbox": (
+                    round(float(x0), 1),
+                    round(float(y0), 1),
+                    round(float(x1), 1),
+                    round(float(y1), 1),
+                ),
+                "text": str(text).strip(),
+                "block_type": int(block_type),
+            })
     return blocks

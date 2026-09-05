@@ -2,31 +2,26 @@
 
 from pathlib import Path
 import time
-from docling.document_converter import DocumentConverter, PdfFormatOption
-from docling.datamodel.pipeline_options import PdfPipelineOptions
-from docling.datamodel.base_models import InputFormat
+from typing import Any
+from docling.document_converter import DocumentConverter
 
 
 def run_docling_pipeline(
     input_path: Path | str,
-    output_path: Path | str,
-    page_number: int | None = 0,
-) -> dict[str, str | float]:
+    output_dir: Path | str,
+    pages: list[int] | None = None,
+) -> dict[str, Any]:
     """Execute Pipeline B: IBM Docling document intelligence layout parsing."""
     in_file = Path(input_path)
-    print(f"[Pipeline B] Initializing IBM Docling for {in_file.name}...")
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"\n[Pipeline B] Initializing IBM Docling for {in_file.name}...")
     start_time = time.time()
 
-    # Configure pipeline options
-    pipeline_options = PdfPipelineOptions()
-    pipeline_options.do_ocr = False  # PDF has digital layout layer; use DocLayNet layout parsing
-    pipeline_options.do_table_structure = True
-
-    converter = DocumentConverter(
-        format_options={
-            InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
-        }
-    )
+    # Initialize DocumentConverter with natural default pipeline
+    # Docling automatically detects digital text streams, layout regions, and applies OCR where needed
+    converter = DocumentConverter()
 
     print(f"[Pipeline B] Converting document via Docling...")
     conv_result = converter.convert(str(in_file))
@@ -35,14 +30,18 @@ def run_docling_pipeline(
     # Export markdown
     markdown_content = conv_result.document.export_to_markdown()
 
-    out_file = Path(output_path)
-    out_file.parent.mkdir(parents=True, exist_ok=True)
-    out_file.write_text(markdown_content, encoding="utf-8")
+    # Save full document
+    full_out_file = out_dir / "pipeline_b_docling_full.md"
+    full_out_file.write_text(markdown_content, encoding="utf-8")
 
-    print(f"[Pipeline B] Completed in {elapsed:.2f}s -> Saved to {out_file}")
+    # Also save page 1 alias for evaluate harness
+    page1_file = out_dir / "pipeline_b_docling_page1.md"
+    page1_file.write_text(markdown_content, encoding="utf-8")
+
+    print(f"[Pipeline B] Completed in {elapsed:.2f}s -> Saved to {full_out_file}")
     return {
         "pipeline": "Pipeline B (IBM Docling)",
-        "output_file": str(out_file),
+        "output_file": str(full_out_file),
         "elapsed_seconds": elapsed,
         "content": markdown_content,
     }

@@ -35,15 +35,20 @@ def main() -> None:
     )
     parser.add_argument(
         "--page",
-        type=int,
-        default=0,
-        help="Page index to test (0-indexed, default: 0 for Page 1)",
+        type=str,
+        default="all",
+        help="Page to process ('all' for entire document, or 1-indexed number like '1'; default: all)",
     )
     parser.add_argument(
         "--output-dir",
         type=str,
         default="outputs",
         help="Directory to store markdown outputs (default: outputs/)",
+    )
+    parser.add_argument(
+        "--show-thinking",
+        action="store_true",
+        help="Stream the model's live reasoning trace directly to stdout",
     )
 
     args = parser.parse_args()
@@ -55,11 +60,18 @@ def main() -> None:
         print(f"Error: Input PDF {pdf_path} not found.")
         sys.exit(1)
 
-    outputs = {
-        "gemma": output_dir / f"pipeline_a_gemma4_page{args.page + 1}.md",
-        "docling": output_dir / f"pipeline_b_docling_page{args.page + 1}.md",
-        "gemini": output_dir / f"pipeline_c_gemini38_page{args.page + 1}.md",
-    }
+    # Determine pages to process
+    if args.page.lower() == "all":
+        target_pages = None  # Process all pages
+        eval_suffix = "full"
+    else:
+        try:
+            p_num = int(args.page)
+            target_pages = [p_num - 1 if p_num > 0 else 0]
+            eval_suffix = f"page{target_pages[0] + 1}"
+        except ValueError:
+            print(f"Error: Invalid --page argument '{args.page}'. Use 'all' or an integer.")
+            sys.exit(1)
 
     # Pipeline A: Local Gemma 4
     if args.pipeline in ("all", "gemma"):
@@ -67,7 +79,12 @@ def main() -> None:
         print("▶ Running Pipeline A: Local Gemma 4:12b Vision (Ollama)")
         print("=" * 60)
         try:
-            run_gemma_pipeline(pdf_path, outputs["gemma"], page_number=args.page)
+            run_gemma_pipeline(
+                pdf_path,
+                output_dir,
+                pages=target_pages,
+                show_thinking=args.show_thinking,
+            )
         except Exception as err:
             print(f"[Pipeline A ERROR]: {err}")
 
@@ -77,7 +94,7 @@ def main() -> None:
         print("▶ Running Pipeline B: Local IBM Docling Layout Intelligence")
         print("=" * 60)
         try:
-            run_docling_pipeline(pdf_path, outputs["docling"], page_number=args.page)
+            run_docling_pipeline(pdf_path, output_dir, pages=target_pages)
         except Exception as err:
             print(f"[Pipeline B ERROR]: {err}")
 
@@ -87,18 +104,28 @@ def main() -> None:
         print("▶ Running Pipeline C: Remote Gemini 3.8 Flash (HTTP API)")
         print("=" * 60)
         try:
-            run_gemini_pipeline(pdf_path, outputs["gemini"], page_number=args.page)
+            run_gemini_pipeline(pdf_path, output_dir, pages=target_pages)
         except Exception as err:
             print(f"[Pipeline C ERROR]: {err}")
 
     # Evaluation phase
     if args.pipeline in ("all", "evaluate"):
         print("\n" + "=" * 60)
-        print("📊 Evaluation & Comparison Summary")
+        print(f"📊 Evaluation & Comparison Summary ({eval_suffix.upper()})")
         print("=" * 60)
+        eval_files = [
+            output_dir / f"pipeline_a_gemma4_{eval_suffix}.md",
+            output_dir / f"pipeline_b_docling_{eval_suffix}.md",
+            output_dir / f"pipeline_c_gemini38_{eval_suffix}.md",
+        ]
+        # Also include page 1 files if full not yet evaluated
         eval_results = []
-        for name, path in outputs.items():
-            eval_results.append(evaluate_markdown_fidelity(path))
+        for path in eval_files:
+            if not path.exists() and eval_suffix == "full":
+                alt = path.with_name(path.name.replace("_full.md", "_page1.md"))
+                eval_results.append(evaluate_markdown_fidelity(alt))
+            else:
+                eval_results.append(evaluate_markdown_fidelity(path))
 
         table = print_comparison_table(eval_results)
         print(table)

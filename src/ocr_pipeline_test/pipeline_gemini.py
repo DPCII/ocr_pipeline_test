@@ -5,6 +5,7 @@ from pathlib import Path
 import time
 from dotenv import load_dotenv
 import httpx
+from typing import Any
 from ocr_pipeline_test.render import render_page_to_base64
 
 # Ensure .env is loaded
@@ -22,21 +23,21 @@ CRITICAL LAYOUT & STRUCTURAL REQUIREMENTS:
 """
 
 
-def run_gemini_pipeline(
+def transcribe_page_gemini(
     pdf_path: Path | str,
-    output_path: Path | str,
-    page_number: int = 0,
+    page_number: int,
     model_name: str = "gemini-3.8-flash",
     api_key: str | None = None,
     timeout_seconds: float = 60.0,
-) -> dict[str, str | float]:
-    """Execute Pipeline C: Remote Gemini 3.8 Flash multimodal API over HTTP."""
+    dpi: int = 200,
+) -> tuple[str, float]:
+    """Transcribe a single page using Gemini 3.8 Flash via HTTP. Returns (content, elapsed_seconds)."""
     key = api_key or os.getenv("GEMINI_API_KEY")
     if not key:
         raise ValueError("GEMINI_API_KEY is not set in environment or .env file.")
 
-    print(f"[Pipeline C] Rendering page {page_number + 1} of {pdf_path}...")
-    img_b64 = render_page_to_base64(pdf_path, page_number=page_number, dpi=200)
+    print(f"\n[Pipeline C] Rendering page {page_number + 1} of {pdf_path} at {dpi} DPI...")
+    img_b64 = render_page_to_base64(pdf_path, page_number=page_number, dpi=dpi)
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}"
     payload = {
@@ -84,14 +85,60 @@ def run_gemini_pipeline(
     if content.endswith("```"):
         content = content[:-3].strip()
 
-    out_file = Path(output_path)
-    out_file.parent.mkdir(parents=True, exist_ok=True)
-    out_file.write_text(content, encoding="utf-8")
+    return content, elapsed
 
-    print(f"[Pipeline C] Completed in {elapsed:.2f}s -> Saved to {out_file}")
+
+def run_gemini_pipeline(
+    pdf_path: Path | str,
+    output_dir: Path | str,
+    pages: list[int] | None = None,
+    model_name: str = "gemini-3.8-flash",
+    api_key: str | None = None,
+    timeout_seconds: float = 60.0,
+    dpi: int = 200,
+) -> dict[str, Any]:
+    """Execute Pipeline C: Remote Gemini 3.8 Flash multimodal API across all or specified pages."""
+    from ocr_pipeline_test.render import get_pdf_page_count
+
+    pdf_file = Path(pdf_path)
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    total_pages = get_pdf_page_count(pdf_file)
+    target_pages = pages if pages is not None else list(range(total_pages))
+
+    print(f"[Pipeline C] Starting Gemini 3.8 Flash transcription for {len(target_pages)} page(s) of {pdf_file.name}...")
+    page_contents: list[str] = []
+    total_elapsed = 0.0
+
+    for p in target_pages:
+        content, elapsed = transcribe_page_gemini(
+            pdf_path=pdf_file,
+            page_number=p,
+            model_name=model_name,
+            api_key=api_key,
+            timeout_seconds=timeout_seconds,
+            dpi=dpi,
+        )
+        total_elapsed += elapsed
+        page_contents.append(content)
+
+        # Save per-page output
+        page_file = out_dir / f"pipeline_c_gemini38_page{p + 1}.md"
+        page_file.write_text(content, encoding="utf-8")
+        print(f"[Pipeline C] Page {p + 1} saved -> {page_file} ({elapsed:.1f}s)")
+
+    # Combine all pages if multi-page
+    full_output_file = out_dir / "pipeline_c_gemini38_full.md"
+    merged_markdown = "\n\n---\n\n".join(
+        f"<!-- Page {p + 1} -->\n\n{text}" for p, text in zip(target_pages, page_contents)
+    )
+    full_output_file.write_text(merged_markdown, encoding="utf-8")
+    print(f"[Pipeline C] Full document saved -> {full_output_file} (Total time: {total_elapsed:.1f}s)")
+
     return {
         "pipeline": f"Pipeline C (Remote {model_name})",
-        "output_file": str(out_file),
-        "elapsed_seconds": elapsed,
-        "content": content,
+        "output_file": str(full_output_file),
+        "pages_processed": len(target_pages),
+        "total_elapsed_seconds": total_elapsed,
     }
