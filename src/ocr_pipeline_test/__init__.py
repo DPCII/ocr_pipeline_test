@@ -73,6 +73,9 @@ def main() -> None:
             print(f"Error: Invalid --page argument '{args.page}'. Use 'all' or an integer.")
             sys.exit(1)
 
+    from ocr_pipeline_test.output_utils import get_timestamp_str, generate_output_path
+    run_ts = get_timestamp_str()
+
     # Pipeline A: Local Gemma 4
     if args.pipeline in ("all", "gemma"):
         print("\n" + "=" * 60)
@@ -84,6 +87,7 @@ def main() -> None:
                 output_dir,
                 pages=target_pages,
                 show_thinking=args.show_thinking,
+                timestamp=run_ts,
             )
         except Exception as err:
             print(f"[Pipeline A ERROR]: {err}")
@@ -94,7 +98,7 @@ def main() -> None:
         print("▶ Running Pipeline B: Local IBM Docling Layout Intelligence")
         print("=" * 60)
         try:
-            run_docling_pipeline(pdf_path, output_dir, pages=target_pages)
+            run_docling_pipeline(pdf_path, output_dir, pages=target_pages, timestamp=run_ts)
         except Exception as err:
             print(f"[Pipeline B ERROR]: {err}")
 
@@ -104,7 +108,7 @@ def main() -> None:
         print("▶ Running Pipeline C: Remote Gemini 3.8 Flash (HTTP API)")
         print("=" * 60)
         try:
-            run_gemini_pipeline(pdf_path, output_dir, pages=target_pages)
+            run_gemini_pipeline(pdf_path, output_dir, pages=target_pages, timestamp=run_ts)
         except Exception as err:
             print(f"[Pipeline C ERROR]: {err}")
 
@@ -115,7 +119,7 @@ def main() -> None:
         print("=" * 60)
         try:
             from ocr_pipeline_test.pipeline_muse import run_muse_pipeline
-            run_muse_pipeline(pdf_path, output_dir, pages=target_pages)
+            run_muse_pipeline(pdf_path, output_dir, pages=target_pages, timestamp=run_ts)
         except Exception as err:
             print(f"[Pipeline Muse ERROR]: {err}")
 
@@ -124,20 +128,23 @@ def main() -> None:
         print("\n" + "=" * 60)
         print(f"📊 Evaluation & Comparison Summary ({eval_suffix.upper()})")
         print("=" * 60)
-        eval_files = [
-            output_dir / f"pipeline_a_gemma4_{eval_suffix}.md",
-            output_dir / f"pipeline_b_docling_{eval_suffix}.md",
-            output_dir / f"pipeline_c_gemini38_{eval_suffix}.md",
-            output_dir / f"pipeline_c2_muse_{eval_suffix}.md",
-        ]
-        # Also include page 1 files if full not yet evaluated
+        eval_suffixes = ["gemma4", "docling", "gemini38", "muse"]
         eval_results = []
-        for path in eval_files:
-            if not path.exists() and eval_suffix == "full":
-                alt = path.with_name(path.name.replace("_full.md", "_page1.md"))
-                eval_results.append(evaluate_markdown_fidelity(alt))
-            else:
-                eval_results.append(evaluate_markdown_fidelity(path))
+
+        for pipe_name in eval_suffixes:
+            # Try current run timestamp first
+            target_file = generate_output_path(output_dir, suffix=f"{pipe_name}_{eval_suffix}", timestamp=run_ts)
+            if not target_file.exists():
+                # Search for latest output_<timestamp>_{pipe_name}_{eval_suffix}.md
+                matches = sorted(output_dir.glob(f"output_*_{pipe_name}_{eval_suffix}.md"), key=lambda f: f.stat().st_mtime, reverse=True)
+                if matches:
+                    target_file = matches[0]
+                elif eval_suffix == "full":
+                    # Fallback to page1
+                    p1_matches = sorted(output_dir.glob(f"output_*_{pipe_name}_page1.md"), key=lambda f: f.stat().st_mtime, reverse=True)
+                    if p1_matches:
+                        target_file = p1_matches[0]
+            eval_results.append(evaluate_markdown_fidelity(target_file))
 
         table = print_comparison_table(eval_results)
         print(table)

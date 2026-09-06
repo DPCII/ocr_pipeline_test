@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 from ocr_pipeline_test.render import render_page_to_base64, get_pdf_page_count
+from ocr_pipeline_test.output_utils import resolve_output_path
 from spatial_guided_ocr.architect import SectionBox, detect_page_sections
 from spatial_guided_ocr.scribe import extract_all_sections
 from spatial_guided_ocr.assembler import assemble_categorized_markdown
@@ -13,28 +14,33 @@ from spatial_guided_ocr.assembler import assemble_categorized_markdown
 
 def run_spatial_guided_pipeline(
     pdf_path: Path | str,
-    output_path: Path | str,
+    output_path: Path | str | None = None,
     model_name: str = "gemma4:12b",
     backend: str = "ollama",
     pages: list[int] | None = None,
     dpi: int = 150,
     show_thinking: bool = False,
+    scribe_engine: str = "gemma",
+    scribe_model: str = "gemma4:12b",
 ) -> dict[str, Any]:
-    """Execute VLM-Guided Spatial Extraction:
+    """Execute Spatial Extraction:
 
-    Stage 1: VLM detects visual layout bounding boxes & thread IDs.
-    Stage 2: PyMuPDF clips 100% verbatim text from those spatial coordinates.
+    Stage 1: Architect (Docling or VLM) detects visual layout bounding boxes & thread IDs.
+    Stage 2: Scribe (Gemma 4 Vision OCR or PyMuPDF) extracts verbatim text per bounding box.
     Stage 3: Assembler groups text by Category & Thread into structured Markdown.
     """
     pdf_file = Path(pdf_path)
-    out_file = Path(output_path)
+    out_file = resolve_output_path(output_path, default_dir="outputs")
     out_file.parent.mkdir(parents=True, exist_ok=True)
 
     total_pages = get_pdf_page_count(pdf_file)
     target_pages = pages if pages is not None else list(range(total_pages))
 
     # Normalize backend and model names
-    if backend == "muse" and model_name.lower() in ("muse", "auto", "", "gemma4:12b"):
+    if backend.lower() in ("docling", "docling-layout") or model_name.lower() == "docling":
+        backend = "docling"
+        model_name = "docling-layout"
+    elif backend == "muse" and model_name.lower() in ("muse", "auto", "", "gemma4:12b"):
         model_name = "muse-spark-1.3-contributor"
     elif backend == "gemini" and model_name.lower() in ("gemini", "auto", "", "gemma4:12b"):
         model_name = "gemini-3.8-flash"
@@ -43,14 +49,14 @@ def run_spatial_guided_pipeline(
         backend = "muse"
 
     print("=" * 65)
-    print(f"▶ Running Spatial-Guided Pipeline ({model_name} + Spatial Scribe)")
-    print(f"  Input: {pdf_file.name} ({len(target_pages)} pages) | Model: {model_name} ({backend})")
+    print(f"▶ Running Spatial-Guided Pipeline (Architect: {model_name} | Scribe: {scribe_engine})")
+    print(f"  Input: {pdf_file.name} ({len(target_pages)} pages) | Architect: {model_name} ({backend})")
     print("=" * 65)
 
     start_total = time.time()
     all_boxes: list[SectionBox] = []
 
-    # Stage 1: Architect (VLM detects layout boxes per page)
+    # Stage 1: Architect (Layout detection per page)
     vlm_start = time.time()
     for p in target_pages:
         img_b64 = render_page_to_base64(pdf_file, page_number=p, dpi=dpi)
@@ -60,6 +66,7 @@ def run_spatial_guided_pipeline(
             model_name=model_name,
             backend=backend,
             show_thinking=show_thinking,
+            pdf_path=pdf_file,
         )
         all_boxes.extend(page_boxes)
     vlm_elapsed = time.time() - vlm_start
@@ -80,12 +87,17 @@ def run_spatial_guided_pipeline(
     layout_json_file.write_text(json.dumps(boxes_data, indent=2), encoding="utf-8")
     print(f"[Architect] Layout schema saved -> {layout_json_file} ({vlm_elapsed:.2f}s)")
 
-    # Stage 2: Scribe (Mechanical verbatim text extraction)
+    # Stage 2: Scribe (Extraction via Gemma 4 Vision OCR or PyMuPDF)
     scribe_start = time.time()
-    print(f"[Scribe] Extracting verbatim text from {len(all_boxes)} bounding boxes via PyMuPDF...")
-    extracted_sections = extract_all_sections(pdf_file, all_boxes)
+    print(f"[Scribe] Extracting text from {len(all_boxes)} bounding boxes via {scribe_engine}...")
+    extracted_sections = extract_all_sections(
+        pdf_file,
+        all_boxes,
+        scribe_engine=scribe_engine,
+        model_name=scribe_model,
+    )
     scribe_elapsed = time.time() - scribe_start
-    print(f"[Scribe] Extraction completed in {scribe_elapsed * 1000:.1f}ms.")
+    print(f"[Scribe] Extraction completed in {scribe_elapsed:.2f}s.")
 
     # Stage 3: Assembler (Markdown generation by category & thread)
     markdown_content = assemble_categorized_markdown(extracted_sections)

@@ -148,9 +148,11 @@ def run_muse_pipeline(
     api_key: str | None = None,
     timeout_seconds: float = 60.0,
     dpi: int = 200,
+    timestamp: str | None = None,
 ) -> dict[str, Any]:
     """Execute Pipeline: Remote Muse Spark 1.3 multimodal API across all or specified pages."""
     from ocr_pipeline_test.render import get_pdf_page_count
+    from ocr_pipeline_test.output_utils import generate_output_path
 
     pdf_file = Path(pdf_path)
     out_dir = Path(output_dir)
@@ -179,11 +181,11 @@ def run_muse_pipeline(
         total_elapsed += elapsed
         page_contents.append(content)
 
-        page_file = out_dir / f"pipeline_c2_muse_page{p + 1}.md"
+        page_file = generate_output_path(out_dir, suffix=f"muse_page{p + 1}", timestamp=timestamp)
         page_file.write_text(content, encoding="utf-8")
         print(f"[Pipeline Muse] Page {p + 1} saved -> {page_file} ({elapsed:.1f}s)")
 
-    full_output_file = out_dir / "pipeline_c2_muse_full.md"
+    full_output_file = generate_output_path(out_dir, suffix="muse_full", timestamp=timestamp)
     merged_markdown = "\n\n---\n\n".join(
         f"<!-- Page {p + 1} -->\n\n{text}" for p, text in zip(target_pages, page_contents)
     )

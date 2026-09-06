@@ -45,16 +45,98 @@ def extract_text_from_section_box(
     return text
 
 
+def extract_text_with_gemma_vision(
+    doc: pymupdf.Document,
+    box: SectionBox,
+    model_name: str = "gemma4:12b",
+    ollama_url: str = "http://localhost:11434",
+    padding_pts: float = 4.0,
+    timeout_seconds: float = 120.0,
+) -> str:
+    """Extract and OCR text from the bounded region using Gemma 4 vision via Ollama."""
+    import base64
+    import json
+    import sys
+    import httpx
+
+    page = doc[box.page_number]
+    pw = page.rect.width
+    ph = page.rect.height
+
+    ymin, xmin, ymax, xmax = box.box_2d
+    x0 = max(0.0, (xmin / 1000.0) * pw - padding_pts)
+    y0 = max(0.0, (ymin / 1000.0) * ph - padding_pts)
+    x1 = min(pw, (xmax / 1000.0) * pw + padding_pts)
+    y1 = min(ph, (ymax / 1000.0) * ph + padding_pts)
+
+    clip_rect = pymupdf.Rect(x0, y0, x1, y1)
+    # Render cropped region at 2x resolution for crisp character recognition
+    pix = page.get_pixmap(matrix=pymupdf.Matrix(2.0, 2.0), clip=clip_rect)
+    img_bytes = pix.tobytes("png")
+    img_b64 = base64.b64encode(img_bytes).decode("utf-8")
+
+    prompt = (
+        "Transcribe all text from this cropped document section verbatim. "
+        "Preserve exact wording, line breaks, and paragraph structure. "
+        "Do not describe the image, do not add introductory remarks, and do not invent text. "
+        "Output ONLY the transcribed text."
+    )
+
+    payload = {
+        "model": model_name,
+        "prompt": prompt,
+        "images": [img_b64],
+        "stream": True,
+        "keep_alive": "10m",
+        "options": {
+            "temperature": 0.1,
+            "num_ctx": 16384,
+            "num_predict": 2048,
+        },
+    }
+
+    content_chunks: list[str] = []
+    print(f"\n[Scribe Gemma 4] Transcribing [{box.category}] (Page {box.page_number + 1}):\n", flush=True)
+
+    timeout = httpx.Timeout(timeout_seconds, connect=30.0)
+    with httpx.Client(timeout=timeout) as client:
+        with client.stream("POST", f"{ollama_url}/api/generate", json=payload) as response:
+            response.raise_for_status()
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                token = data.get("response", "")
+                if token:
+                    content_chunks.append(token)
+                    sys.stdout.write(token)
+                    sys.stdout.flush()
+                if data.get("done", False):
+                    break
+            print()
+
+    return "".join(content_chunks).strip()
+
+
 def extract_all_sections(
     pdf_path: Path | str,
     boxes: list[SectionBox],
+    scribe_engine: str = "gemma",
+    model_name: str = "gemma4:12b",
 ) -> list[dict[str, Any]]:
-    """Extract verbatim text for all detected section boxes in the document."""
+    """Extract text for all detected section boxes via Gemma 4 vision OCR or PyMuPDF."""
     doc = pymupdf.open(str(pdf_path))
     extracted_sections: list[dict[str, Any]] = []
 
     for box in boxes:
-        text = extract_text_from_section_box(doc, box)
+        if scribe_engine.lower() in ("gemma", "vlm", "ollama", "ocr"):
+            text = extract_text_with_gemma_vision(doc, box, model_name=model_name)
+        else:
+            text = extract_text_from_section_box(doc, box)
+
         extracted_sections.append({
             "category": box.category,
             "label": box.label,

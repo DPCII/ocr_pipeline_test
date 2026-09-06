@@ -22,13 +22,19 @@ def main() -> None:
         "--model",
         type=str,
         default="gemma4:12b",
-        help="VLM model to use for layout detection (default: gemma4:12b)",
+        help="VLM model to use for layout detection (default: gemma4:12b, or 'docling')",
     )
     parser.add_argument(
         "--backend",
-        choices=["ollama", "gemini", "muse", "auto"],
+        choices=["ollama", "gemini", "muse", "docling", "auto"],
         default="auto",
-        help="Backend to use (ollama, gemini, or muse; default: auto-detected from model name)",
+        help="Backend to use for layout detection (ollama, gemini, muse, or docling; default: auto)",
+    )
+    parser.add_argument(
+        "--scribe",
+        choices=["gemma", "pymupdf"],
+        default="gemma",
+        help="Scribe engine for text extraction (gemma: Gemma 4 Vision OCR, pymupdf: digital extraction; default: gemma)",
     )
     parser.add_argument(
         "--page",
@@ -39,8 +45,8 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=str,
-        default="outputs/pipeline_guided_spatial.md",
-        help="Destination markdown file (default: outputs/pipeline_guided_spatial.md)",
+        default=None,
+        help="Destination markdown file (default: outputs/output_<ddMMMyyyy-hhmm-ss>.md)",
     )
     parser.add_argument(
         "--show-thinking",
@@ -66,14 +72,19 @@ def main() -> None:
     model = args.model
 
     if backend == "auto":
-        if "gemini" in model.lower():
+        if "docling" in model.lower():
+            backend = "docling"
+        elif "gemini" in model.lower():
             backend = "gemini"
         elif "muse" in model.lower():
             backend = "muse"
         else:
             backend = "ollama"
 
-    if backend == "muse" and model.lower() in ("muse", "auto", "", "gemma4:12b"):
+    if backend == "docling" or model.lower() == "docling":
+        backend = "docling"
+        model = "docling-layout"
+    elif backend == "muse" and model.lower() in ("muse", "auto", "", "gemma4:12b"):
         model = "muse-spark-1.3-contributor"
     elif backend == "gemini" and model.lower() in ("gemini", "auto", "", "gemma4:12b"):
         model = "gemini-3.8-flash"
@@ -100,6 +111,7 @@ def main() -> None:
             backend=backend,
             pages=target_pages,
             show_thinking=args.show_thinking,
+            scribe_engine=args.scribe,
         )
     except Exception as err:
         print(f"\n[ERROR] Pipeline failed: {err}")

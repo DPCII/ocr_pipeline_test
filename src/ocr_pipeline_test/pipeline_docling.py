@@ -4,12 +4,14 @@ from pathlib import Path
 import time
 from typing import Any
 from docling.document_converter import DocumentConverter
+from ocr_pipeline_test.output_utils import generate_output_path
 
 
 def run_docling_pipeline(
     input_path: Path | str,
     output_dir: Path | str,
     pages: list[int] | None = None,
+    timestamp: str | None = None,
 ) -> dict[str, Any]:
     """Execute Pipeline B: IBM Docling document intelligence layout parsing."""
     in_file = Path(input_path)
@@ -31,11 +33,11 @@ def run_docling_pipeline(
     markdown_content = conv_result.document.export_to_markdown()
 
     # Save full document
-    full_out_file = out_dir / "pipeline_b_docling_full.md"
+    full_out_file = generate_output_path(out_dir, suffix="docling_full", timestamp=timestamp)
     full_out_file.write_text(markdown_content, encoding="utf-8")
 
     # Also save page 1 alias for evaluate harness
-    page1_file = out_dir / "pipeline_b_docling_page1.md"
+    page1_file = generate_output_path(out_dir, suffix="docling_page1", timestamp=timestamp)
     page1_file.write_text(markdown_content, encoding="utf-8")
 
     print(f"[Pipeline B] Completed in {elapsed:.2f}s -> Saved to {full_out_file}")

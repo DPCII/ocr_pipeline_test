@@ -377,12 +377,117 @@ def _parse_json_sections(raw_text: str) -> list[dict[str, Any]]:
         return []
 
 
+# Cache Docling document to avoid re-converting the same PDF for each page
+_DOCLING_CACHE: dict[str, Any] = {}
+
+
+def detect_sections_with_docling(
+    pdf_path: Path | str,
+    page_number: int,
+) -> list[dict[str, Any]]:
+    """Detect section bounding boxes using IBM Docling layout analysis engine."""
+    from docling.document_converter import DocumentConverter
+
+    pdf_key = str(Path(pdf_path).resolve())
+    if pdf_key not in _DOCLING_CACHE:
+        print(f"[Architect] Initializing IBM Docling layout engine for {Path(pdf_path).name}...", flush=True)
+        converter = DocumentConverter()
+        _DOCLING_CACHE[pdf_key] = converter.convert(pdf_key).document
+
+    doc = _DOCLING_CACHE[pdf_key]
+    doc_page_no = page_number + 1
+    if doc_page_no not in doc.pages:
+        return []
+
+    page = doc.pages[doc_page_no]
+    pw, ph = page.size.width, page.size.height
+
+    p_items = [
+        it for it, _ in doc.iterate_items()
+        if getattr(it, "prov", None) and it.prov[0].page_no == doc_page_no
+    ]
+
+    result: list[dict[str, Any]] = []
+    section_counter = 0
+    current_thread_id = "intro"
+    current_section_label = "General Content"
+    thread_order_counters: dict[str, int] = {}
+
+    for it in p_items:
+        b = it.prov[0].bbox
+        ymin = max(0, min(1000, int(((ph - b.t) / ph) * 1000)))
+        ymax = max(0, min(1000, int(((ph - b.b) / ph) * 1000)))
+        xmin = max(0, min(1000, int((b.l / pw) * 1000)))
+        xmax = max(0, min(1000, int((b.r / pw) * 1000)))
+
+        # Ensure valid coordinates
+        if ymin >= ymax or xmin >= xmax:
+            continue
+
+        raw_label = str(getattr(it, "label", "text")).lower()
+        item_text = getattr(it, "text", "").strip()
+
+        # Semantic classification based entirely on Docling's native layout model
+        if "title" in raw_label or "page_header" in raw_label:
+            category = "Banner"
+            tid = f"header_p{doc_page_no}"
+            lbl = item_text if item_text else "Document Header / Banner"
+        elif "page_footer" in raw_label:
+            category = "Footer"
+            tid = f"footer_p{doc_page_no}"
+            lbl = item_text if item_text else "Page Footer"
+        elif "section_header" in raw_label:
+            category = "Section Header"
+            section_counter += 1
+            current_thread_id = f"section_{doc_page_no}_{section_counter}"
+            current_section_label = item_text if item_text else f"Section {section_counter}"
+            tid = current_thread_id
+            lbl = current_section_label
+        elif "list_item" in raw_label:
+            category = "List"
+            tid = current_thread_id
+            lbl = current_section_label
+        elif "table" in raw_label:
+            category = "Table"
+            tid = current_thread_id
+            lbl = f"Table in {current_section_label}"
+        elif "picture" in raw_label or "chart" in raw_label:
+            category = "Graphic"
+            tid = f"figure_p{doc_page_no}_{len(result) + 1}"
+            lbl = "Figure / Image"
+        elif "caption" in raw_label:
+            category = "Caption"
+            tid = current_thread_id
+            lbl = "Caption"
+        elif "footnote" in raw_label:
+            category = "Footnote"
+            tid = f"footnote_p{doc_page_no}"
+            lbl = "Footnote"
+        else:
+            category = "Main Story"
+            tid = current_thread_id
+            lbl = current_section_label
+
+        thread_order_counters[tid] = thread_order_counters.get(tid, 0) + 1
+
+        result.append({
+            "category": category,
+            "box_2d": [ymin, xmin, ymax, xmax],
+            "thread_id": tid,
+            "order": thread_order_counters[tid],
+            "label": lbl,
+        })
+
+    return result
+
+
 def detect_page_sections(
     img_b64: str,
     page_number: int,
     model_name: str = "gemma4:12b",
     backend: str = "ollama",
     show_thinking: bool = False,
+    pdf_path: Path | str | None = None,
 ) -> list[SectionBox]:
     """Unified entrypoint to detect layout bounding boxes for a single page."""
     if backend.lower() == "muse" and model_name.lower() in ("muse", "auto", ""):
@@ -392,9 +497,16 @@ def detect_page_sections(
     elif model_name.lower() == "muse":
         model_name = "muse-spark-1.3-contributor"
         backend = "muse"
+    elif backend.lower() == "docling" or model_name.lower() == "docling":
+        backend = "docling"
+        model_name = "docling-layout"
 
     print(f"[Architect] Detecting visual sections on Page {page_number + 1} with {model_name} ({backend})...")
-    if backend.lower() == "gemini" or "gemini" in model_name.lower():
+    if backend.lower() == "docling":
+        if not pdf_path:
+            raise ValueError("pdf_path is required for Docling layout detection")
+        raw_sections = detect_sections_with_docling(pdf_path, page_number)
+    elif backend.lower() == "gemini" or "gemini" in model_name.lower():
         raw_sections = detect_sections_with_gemini(img_b64, model_name=model_name, show_thinking=show_thinking)
     elif backend.lower() == "muse" or "muse" in model_name.lower():
         raw_sections = detect_sections_with_muse(img_b64, model_name=model_name, show_thinking=show_thinking)

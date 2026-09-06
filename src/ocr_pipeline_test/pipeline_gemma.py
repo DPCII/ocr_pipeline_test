@@ -38,15 +38,20 @@ def transcribe_page_gemma(
     print(f"[Pipeline A] Sending vision request to Ollama ({model_name}) with 32k context...")
     start_time = time.time()
 
+    from ocr_pipeline_test.gemma_tuning import GemmaThoughtWatchdog, clean_gemma_chat_history
+
+    messages = [
+        {
+            "role": "user",
+            "content": PROMPT_TEMPLATE,
+            "images": [img_b64],
+        }
+    ]
+    sanitized_messages = clean_gemma_chat_history(messages)
+
     payload = {
         "model": model_name,
-        "messages": [
-            {
-                "role": "user",
-                "content": PROMPT_TEMPLATE,
-                "images": [img_b64],
-            }
-        ],
+        "messages": sanitized_messages,
         "stream": True,
         "keep_alive": "10m",
         "options": {
@@ -55,9 +60,11 @@ def transcribe_page_gemma(
             "top_k": 40,
             "repeat_penalty": 1.18,
             "num_ctx": 32768,
+            "num_predict": 4096,  # Cap generation horizon to mitigate infinite self-doubt
         },
     }
 
+    watchdog = GemmaThoughtWatchdog(max_thought_tokens=2500, warning_threshold=2000)
     thought_chunks: list[str] = []
     content_chunks: list[str] = []
     in_thinking_phase = True
@@ -84,6 +91,7 @@ def transcribe_page_gemma(
                 content_part = msg.get("content", "")
 
                 if thought:
+                    watchdog.record_thought_chunk(thought)
                     thought_chunks.append(thought)
                     if show_thinking:
                         sys.stdout.write(thought)
@@ -93,6 +101,7 @@ def transcribe_page_gemma(
                             print("T", end="", flush=True)
 
                 if content_part:
+                    watchdog.record_content_chunk(content_part)
                     if in_thinking_phase:
                         in_thinking_phase = False
                         if show_thinking:
@@ -139,9 +148,11 @@ def run_gemma_pipeline(
     timeout_seconds: float = 900.0,
     dpi: int = 150,
     show_thinking: bool = False,
+    timestamp: str | None = None,
 ) -> dict[str, Any]:
     """Execute Pipeline A: Local Gemma 4:12b vision across all or specified pages."""
     from ocr_pipeline_test.render import get_pdf_page_count
+    from ocr_pipeline_test.output_utils import generate_output_path
 
     pdf_file = Path(pdf_path)
     out_dir = Path(output_dir)
@@ -168,17 +179,17 @@ def run_gemma_pipeline(
         page_contents.append(content)
 
         # Save per-page output
-        page_file = out_dir / f"pipeline_a_gemma4_page{p + 1}.md"
+        page_file = generate_output_path(out_dir, suffix=f"gemma4_page{p + 1}", timestamp=timestamp)
         page_file.write_text(content, encoding="utf-8")
         print(f"[Pipeline A] Page {p + 1} saved -> {page_file} ({elapsed:.1f}s)")
 
         # Save per-page reasoning trace
         if thinking:
-            thought_file = out_dir / f"pipeline_a_gemma4_page{p + 1}_thinking.md"
+            thought_file = generate_output_path(out_dir, suffix=f"gemma4_page{p + 1}_thinking", timestamp=timestamp)
             thought_file.write_text(thinking, encoding="utf-8")
 
     # Combine all pages if multi-page
-    full_output_file = out_dir / "pipeline_a_gemma4_full.md"
+    full_output_file = generate_output_path(out_dir, suffix="gemma4_full", timestamp=timestamp)
     merged_markdown = "\n\n---\n\n".join(
         f"<!-- Page {p + 1} -->\n\n{text}" for p, text in zip(target_pages, page_contents)
     )

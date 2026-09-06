@@ -133,9 +133,11 @@ def run_gemini_pipeline(
     api_key: str | None = None,
     timeout_seconds: float = 60.0,
     dpi: int = 200,
+    timestamp: str | None = None,
 ) -> dict[str, Any]:
     """Execute Pipeline C: Remote Gemini 3.8 Flash multimodal API across all or specified pages."""
     from ocr_pipeline_test.render import get_pdf_page_count
+    from ocr_pipeline_test.output_utils import generate_output_path
 
     pdf_file = Path(pdf_path)
     out_dir = Path(output_dir)
@@ -161,12 +163,12 @@ def run_gemini_pipeline(
         page_contents.append(content)
 
         # Save per-page output
-        page_file = out_dir / f"pipeline_c_gemini38_page{p + 1}.md"
+        page_file = generate_output_path(out_dir, suffix=f"gemini38_page{p + 1}", timestamp=timestamp)
         page_file.write_text(content, encoding="utf-8")
         print(f"[Pipeline C] Page {p + 1} saved -> {page_file} ({elapsed:.1f}s)")
 
     # Combine all pages if multi-page
-    full_output_file = out_dir / "pipeline_c_gemini38_full.md"
+    full_output_file = generate_output_path(out_dir, suffix="gemini38_full", timestamp=timestamp)
     merged_markdown = "\n\n---\n\n".join(
         f"<!-- Page {p + 1} -->\n\n{text}" for p, text in zip(target_pages, page_contents)
     )
