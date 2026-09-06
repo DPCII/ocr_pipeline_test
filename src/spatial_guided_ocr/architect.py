@@ -171,88 +171,6 @@ def detect_sections_with_muse(
     return _parse_json_sections(content)
 
 
-def detect_sections_with_ollama(
-    img_b64: str,
-    model_name: str = "gemma4:12b",
-    ollama_url: str = "http://localhost:11434",
-    timeout_seconds: float = 600.0,
-    show_thinking: bool = False,
-) -> list[dict[str, Any]]:
-    """Detect section bounding boxes using a local Ollama vision model (e.g. Gemma 4:12b) with streaming."""
-    import sys
-
-    payload = {
-        "model": model_name,
-        "messages": [
-            {
-                "role": "user",
-                "content": LAYOUT_DETECTION_PROMPT,
-                "images": [img_b64],
-            }
-        ],
-        "format": "json",
-        "stream": True,
-        "keep_alive": "10m",
-        "options": {
-            "temperature": 0.6,
-            "top_p": 0.95,
-            "top_k": 40,
-            "repeat_penalty": 1.18,
-            "num_ctx": 32768,
-        },
-    }
-
-    thought_chunks: list[str] = []
-    content_chunks: list[str] = []
-    in_thinking_phase = True
-
-    timeout = httpx.Timeout(timeout_seconds, connect=30.0)
-    with httpx.Client(timeout=timeout) as client:
-        with client.stream("POST", f"{ollama_url}/api/chat", json=payload) as response:
-            response.raise_for_status()
-            if show_thinking:
-                print("\n=== [Architect Live Layout Reasoning] ===", flush=True)
-            else:
-                print("[Architect] Thinking layout geometry (T per 25 tokens): ", end="", flush=True)
-
-            for line in response.iter_lines():
-                if not line:
-                    continue
-                try:
-                    data = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-
-                msg = data.get("message", {})
-                thought = msg.get("thinking", "")
-                content_part = msg.get("content", "")
-
-                if thought:
-                    thought_chunks.append(thought)
-                    if show_thinking:
-                        sys.stdout.write(thought)
-                        sys.stdout.flush()
-                    else:
-                        if len(thought_chunks) % 25 == 0:
-                            print("T", end="", flush=True)
-
-                if content_part:
-                    if in_thinking_phase:
-                        in_thinking_phase = False
-                        if show_thinking:
-                            print("\n=== [End Layout Reasoning] ===\n", flush=True)
-                        print("\n[Architect] Generating bounding boxes JSON: ", end="", flush=True)
-                    content_chunks.append(content_part)
-                    if len(content_chunks) % 25 == 0:
-                        print(".", end="", flush=True)
-
-                if data.get("done", False):
-                    break
-            print(" done.")
-
-    content = "".join(content_chunks).strip()
-    return _parse_json_sections(content)
-
 
 def detect_sections_with_gemini(
     img_b64: str,
@@ -484,38 +402,38 @@ def detect_sections_with_docling(
 def detect_page_sections(
     img_b64: str,
     page_number: int,
-    model_name: str = "gemma4:12b",
-    backend: str = "ollama",
+    model_name: str = "docling-layout",
+    backend: str = "docling",
     show_thinking: bool = False,
     pdf_path: Path | str | None = None,
 ) -> list[SectionBox]:
     """Unified entrypoint to detect layout bounding boxes for a single page."""
-    if backend.lower() == "muse" and model_name.lower() in ("muse", "auto", ""):
-        model_name = "muse-spark-1.3-contributor"
-    elif backend.lower() == "gemini" and model_name.lower() in ("gemini", "auto", ""):
-        model_name = "gemini-3.8-flash"
-    elif model_name.lower() == "muse":
-        model_name = "muse-spark-1.3-contributor"
-        backend = "muse"
-    elif backend.lower() == "docling" or model_name.lower() == "docling":
+    if backend.lower() in ("docling", "docling-layout", "local") or model_name.lower() in ("docling", "docling-layout"):
         backend = "docling"
         model_name = "docling-layout"
+    elif backend.lower() in ("gemini", "google") or "gemini" in model_name.lower():
+        backend = "gemini"
+        if model_name.lower() in ("gemini", "auto", ""):
+            model_name = "gemini-3.8-flash"
+    elif backend.lower() in ("muse", "meta") or "muse" in model_name.lower():
+        backend = "muse"
+        if model_name.lower() in ("muse", "auto", ""):
+            model_name = "muse-spark-1.3-contributor"
+    else:
+        raise ValueError(
+            f"Unsupported layout backend: '{backend}'. "
+            f"Supported layout engines: 'docling' (local), 'gemini' (remote VLM), 'muse' (remote VLM)."
+        )
 
     print(f"[Architect] Detecting visual sections on Page {page_number + 1} with {model_name} ({backend})...")
-    if backend.lower() == "docling":
+    if backend == "docling":
         if not pdf_path:
             raise ValueError("pdf_path is required for Docling layout detection")
         raw_sections = detect_sections_with_docling(pdf_path, page_number)
-    elif backend.lower() == "gemini" or "gemini" in model_name.lower():
+    elif backend == "gemini":
         raw_sections = detect_sections_with_gemini(img_b64, model_name=model_name, show_thinking=show_thinking)
-    elif backend.lower() == "muse" or "muse" in model_name.lower():
+    elif backend == "muse":
         raw_sections = detect_sections_with_muse(img_b64, model_name=model_name, show_thinking=show_thinking)
-    else:
-        raw_sections = detect_sections_with_ollama(
-            img_b64,
-            model_name=model_name,
-            show_thinking=show_thinking,
-        )
 
     boxes: list[SectionBox] = []
     for s in raw_sections:

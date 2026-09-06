@@ -15,18 +15,19 @@ from spatial_guided_ocr.assembler import assemble_categorized_markdown
 def run_spatial_guided_pipeline(
     pdf_path: Path | str,
     output_path: Path | str | None = None,
-    model_name: str = "gemma4:12b",
-    backend: str = "ollama",
+    model_name: str = "docling-layout",
+    backend: str = "docling",
     pages: list[int] | None = None,
     dpi: int = 150,
     show_thinking: bool = False,
-    scribe_engine: str = "gemma",
-    scribe_model: str = "gemma4:12b",
+    enable_image_ocr: bool = True,
+    ocr_model: str = "gemma4:12b",
+    ollama_url: str = "http://localhost:11434",
 ) -> dict[str, Any]:
     """Execute Spatial Extraction:
 
-    Stage 1: Architect (Docling or VLM) detects visual layout bounding boxes & thread IDs.
-    Stage 2: Scribe (Gemma 4 Vision OCR or PyMuPDF) extracts verbatim text per bounding box.
+    Stage 1: Architect (Docling or VLM: Gemini, Muse) detects visual layout bounding boxes & thread IDs.
+    Stage 2: Scribe (PyMuPDF for digital text; Gemma Vision via Ollama for image OCR) extracts verbatim text.
     Stage 3: Assembler groups text by Category & Thread into structured Markdown.
     """
     pdf_file = Path(pdf_path)
@@ -37,19 +38,21 @@ def run_spatial_guided_pipeline(
     target_pages = pages if pages is not None else list(range(total_pages))
 
     # Normalize backend and model names
-    if backend.lower() in ("docling", "docling-layout") or model_name.lower() == "docling":
+    if backend.lower() in ("docling", "docling-layout", "local") or model_name.lower() in ("docling", "docling-layout"):
         backend = "docling"
         model_name = "docling-layout"
-    elif backend == "muse" and model_name.lower() in ("muse", "auto", "", "gemma4:12b"):
-        model_name = "muse-spark-1.3-contributor"
-    elif backend == "gemini" and model_name.lower() in ("gemini", "auto", "", "gemma4:12b"):
-        model_name = "gemini-3.8-flash"
-    elif model_name.lower() == "muse":
-        model_name = "muse-spark-1.3-contributor"
+    elif backend.lower() in ("muse", "meta") or "muse" in model_name.lower():
         backend = "muse"
+        if model_name.lower() in ("muse", "auto", ""):
+            model_name = "muse-spark-1.3-contributor"
+    elif backend.lower() in ("gemini", "google") or "gemini" in model_name.lower():
+        backend = "gemini"
+        if model_name.lower() in ("gemini", "auto", ""):
+            model_name = "gemini-3.8-flash"
 
+    ocr_info = f" | Image OCR: {ocr_model}" if enable_image_ocr else " | Image OCR: disabled"
     print("=" * 65)
-    print(f"▶ Running Spatial-Guided Pipeline (Architect: {model_name} | Scribe: {scribe_engine})")
+    print(f"▶ Running Spatial-Guided Pipeline (Architect: {model_name}{ocr_info})")
     print(f"  Input: {pdf_file.name} ({len(target_pages)} pages) | Architect: {model_name} ({backend})")
     print("=" * 65)
 
@@ -87,14 +90,15 @@ def run_spatial_guided_pipeline(
     layout_json_file.write_text(json.dumps(boxes_data, indent=2), encoding="utf-8")
     print(f"[Architect] Layout schema saved -> {layout_json_file} ({vlm_elapsed:.2f}s)")
 
-    # Stage 2: Scribe (Extraction via Gemma 4 Vision OCR or PyMuPDF)
+    # Stage 2: Scribe (Digital text extraction via PyMuPDF + Image OCR via Gemma)
     scribe_start = time.time()
-    print(f"[Scribe] Extracting text from {len(all_boxes)} bounding boxes via {scribe_engine}...")
+    print(f"[Scribe] Extracting text from {len(all_boxes)} bounding boxes...")
     extracted_sections = extract_all_sections(
         pdf_file,
         all_boxes,
-        scribe_engine=scribe_engine,
-        model_name=scribe_model,
+        enable_image_ocr=enable_image_ocr,
+        ocr_model=ocr_model,
+        ollama_url=ollama_url,
     )
     scribe_elapsed = time.time() - scribe_start
     print(f"[Scribe] Extraction completed in {scribe_elapsed:.2f}s.")

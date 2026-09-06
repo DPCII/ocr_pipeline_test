@@ -10,7 +10,7 @@ from spatial_guided_ocr.pipeline import run_spatial_guided_pipeline
 def main() -> None:
     """CLI dispatcher for the spatial guided OCR pipeline."""
     parser = argparse.ArgumentParser(
-        description="VLM-Guided Spatial Extraction: VLM detects visual section bounding boxes; Scribe extracts verbatim text."
+        description="Spatial Document Intelligence: Layout analysis (Docling / VLM) + Scribe extraction (PyMuPDF & Gemma Image OCR)."
     )
     parser.add_argument(
         "--pdf",
@@ -21,20 +21,31 @@ def main() -> None:
     parser.add_argument(
         "--model",
         type=str,
-        default="gemma4:12b",
-        help="VLM model to use for layout detection (default: gemma4:12b, or 'docling')",
+        default="docling-layout",
+        help="Model / engine for layout detection ('docling-layout', 'gemini-3.8-flash', 'muse-spark-1.3-contributor'; default: docling-layout)",
     )
     parser.add_argument(
         "--backend",
-        choices=["ollama", "gemini", "muse", "docling", "auto"],
+        choices=["docling", "gemini", "muse", "auto"],
         default="auto",
-        help="Backend to use for layout detection (ollama, gemini, muse, or docling; default: auto)",
+        help="Backend for layout detection (docling, gemini, muse; default: auto)",
     )
     parser.add_argument(
-        "--scribe",
-        choices=["gemma", "pymupdf"],
-        default="gemma",
-        help="Scribe engine for text extraction (gemma: Gemma 4 Vision OCR, pymupdf: digital extraction; default: gemma)",
+        "--ocr-model",
+        type=str,
+        default="gemma4:12b",
+        help="Vision model target for image OCR jobs served via Ollama (default: gemma4:12b)",
+    )
+    parser.add_argument(
+        "--ollama-url",
+        type=str,
+        default="http://localhost:11434",
+        help="Ollama host URL for serving local models (default: http://localhost:11434)",
+    )
+    parser.add_argument(
+        "--no-image-ocr",
+        action="store_true",
+        help="Disable Gemma image OCR for graphics and scanned regions",
     )
     parser.add_argument(
         "--page",
@@ -58,7 +69,7 @@ def main() -> None:
         "--no-thinking",
         dest="show_thinking",
         action="store_false",
-        help="Suppress streaming of the live reasoning trace",
+        help="Suppress streaming of the live reasoning trace (prints compact progress markers instead)",
     )
 
     args = parser.parse_args()
@@ -72,25 +83,25 @@ def main() -> None:
     model = args.model
 
     if backend == "auto":
-        if "docling" in model.lower():
-            backend = "docling"
-        elif "gemini" in model.lower():
+        if "gemini" in model.lower():
             backend = "gemini"
         elif "muse" in model.lower():
             backend = "muse"
         else:
-            backend = "ollama"
+            backend = "docling"
+            model = "docling-layout"
 
-    if backend == "docling" or model.lower() == "docling":
+    if backend == "docling" or model.lower() in ("docling", "docling-layout"):
         backend = "docling"
         model = "docling-layout"
-    elif backend == "muse" and model.lower() in ("muse", "auto", "", "gemma4:12b"):
-        model = "muse-spark-1.3-contributor"
-    elif backend == "gemini" and model.lower() in ("gemini", "auto", "", "gemma4:12b"):
-        model = "gemini-3.8-flash"
-    elif model.lower() == "muse":
-        model = "muse-spark-1.3-contributor"
+    elif backend == "muse" or "muse" in model.lower():
         backend = "muse"
+        if model.lower() in ("muse", "auto", ""):
+            model = "muse-spark-1.3-contributor"
+    elif backend == "gemini" or "gemini" in model.lower():
+        backend = "gemini"
+        if model.lower() in ("gemini", "auto", ""):
+            model = "gemini-3.8-flash"
 
     # Determine pages
     if args.page.lower() == "all":
@@ -111,7 +122,9 @@ def main() -> None:
             backend=backend,
             pages=target_pages,
             show_thinking=args.show_thinking,
-            scribe_engine=args.scribe,
+            enable_image_ocr=not args.no_image_ocr,
+            ocr_model=args.ocr_model,
+            ollama_url=args.ollama_url,
         )
     except Exception as err:
         print(f"\n[ERROR] Pipeline failed: {err}")

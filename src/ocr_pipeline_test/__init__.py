@@ -4,7 +4,6 @@ import argparse
 from pathlib import Path
 import sys
 
-from ocr_pipeline_test.pipeline_gemma import run_gemma_pipeline
 from ocr_pipeline_test.pipeline_docling import run_docling_pipeline
 from ocr_pipeline_test.pipeline_gemini import run_gemini_pipeline
 from ocr_pipeline_test.evaluate import evaluate_markdown_fidelity, print_comparison_table
@@ -13,11 +12,11 @@ from ocr_pipeline_test.evaluate import evaluate_markdown_fidelity, print_compari
 def main() -> None:
     """CLI dispatcher to run document intelligence pipelines and evaluate results."""
     parser = argparse.ArgumentParser(
-        description="Run and compare OCR / Document Intelligence pipelines (Gemma 4 vision, Docling, Gemini 3.8 Flash)."
+        description="Run and compare OCR / Document Intelligence pipelines (Docling, Gemini 3.8 Flash, Muse Spark 1.3)."
     )
     parser.add_argument(
         "--pipeline",
-        choices=["all", "gemma", "docling", "gemini", "muse", "evaluate"],
+        choices=["all", "docling", "gemini", "muse", "evaluate"],
         default="all",
         help="Which pipeline to execute (default: all)",
     )
@@ -76,22 +75,6 @@ def main() -> None:
     from ocr_pipeline_test.output_utils import get_timestamp_str, generate_output_path
     run_ts = get_timestamp_str()
 
-    # Pipeline A: Local Gemma 4
-    if args.pipeline in ("all", "gemma"):
-        print("\n" + "=" * 60)
-        print("▶ Running Pipeline A: Local Gemma 4:12b Vision (Ollama)")
-        print("=" * 60)
-        try:
-            run_gemma_pipeline(
-                pdf_path,
-                output_dir,
-                pages=target_pages,
-                show_thinking=args.show_thinking,
-                timestamp=run_ts,
-            )
-        except Exception as err:
-            print(f"[Pipeline A ERROR]: {err}")
-
     # Pipeline B: Local IBM Docling
     if args.pipeline in ("all", "docling"):
         print("\n" + "=" * 60)
@@ -128,7 +111,7 @@ def main() -> None:
         print("\n" + "=" * 60)
         print(f"📊 Evaluation & Comparison Summary ({eval_suffix.upper()})")
         print("=" * 60)
-        eval_suffixes = ["gemma4", "docling", "gemini38", "muse"]
+        eval_suffixes = ["docling", "gemini38", "muse"]
         eval_results = []
 
         for pipe_name in eval_suffixes:

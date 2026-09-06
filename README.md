@@ -14,9 +14,10 @@ A reproducible, high-accuracy document intelligence testbed on macOS (Apple Sili
 
 | Pipeline | Model / Tool | Execution | Key Strengths |
 | :--- | :--- | :--- | :--- |
-| **Pipeline A** | **Gemma 4:12b Vision** | Local (Ollama) | 100% private, native vision/CLIP projector, fits within 18GB unified RAM. |
+| **Spatial-Guided** | **Docling + PyMuPDF (+ Gemma OCR)** | Local (`spatial-ocr`) | Hybrid architecture: Docling layout detection, verbatim PyMuPDF extraction, Gemma 4 for image OCR. |
 | **Pipeline B** | **IBM Docling** | Local (`docling`) | Layout segmentation, DocLayNet reading order, bounding box tracking, PDF/DOCX support. |
 | **Pipeline C** | **Gemini 3.8 Flash** | Remote (HTTP API) | Frontier multimodal vision accuracy, rich formatting, zero local compute overhead. |
+| **Pipeline C2** | **Muse Spark 1.3** | Remote (Meta API) | Frontier multimodal vision with live reasoning traces via Meta API. |
 
 ---
 
@@ -27,34 +28,37 @@ The project is managed via `mise` and `uv`:
 ```zsh
 # Verify tools
 uv --version
-pixi --version
 
 # Install dependencies (already pinned in uv.lock)
 uv sync
 ```
 
-Ensure `.env` contains your Gemini API key:
+Ensure `.env` contains your API keys:
 ```bash
 GEMINI_API_KEY=your_key_here
+MUSE_API_KEY=your_key_here
 ```
 
 ### 2. Running Pipelines
 
-To execute all three pipelines and run the evaluation:
+#### Spatial-Guided Hybrid Extraction:
 ```zsh
-uv run ocr-pipeline-test --pipeline all
+# Run spatial-guided OCR (Docling layout + PyMuPDF digital text + Gemma image OCR)
+uv run spatial-ocr --pdf multipage_newsletter.pdf
+
+# Quiet mode (suppress live thought streaming from VLMs)
+uv run spatial-ocr --no-thinking
 ```
 
-To run individual pipelines:
+#### Benchmark Comparison Testbed:
 ```zsh
-# Run local Gemma 4:12b Vision
-uv run ocr-pipeline-test --pipeline gemma
+# Run all benchmark pipelines (Docling, Gemini 3.8 Flash, Muse Spark 1.3)
+uv run ocr-pipeline-test --pipeline all
 
-# Run local IBM Docling
+# Run individual pipelines:
 uv run ocr-pipeline-test --pipeline docling
-
-# Run remote Gemini 3.8 Flash
 uv run ocr-pipeline-test --pipeline gemini
+uv run ocr-pipeline-test --pipeline muse
 
 # Re-run evaluation on existing outputs
 uv run ocr-pipeline-test --pipeline evaluate
@@ -62,6 +66,8 @@ uv run ocr-pipeline-test --pipeline evaluate
 
 ### 3. Output Artifacts
 All generated Markdown files are saved to `outputs/`:
-- `outputs/pipeline_a_gemma4_page1.md`
-- `outputs/pipeline_b_docling_page1.md`
-- `outputs/pipeline_c_gemini38_page1.md`
+- `outputs/output_<timestamp>.md` (Spatial-guided output)
+- `outputs/output_<timestamp>_layout.json` (Spatial layout schema)
+- `outputs/output_<timestamp>_docling_page1.md`
+- `outputs/output_<timestamp>_gemini38_page1.md`
+- `outputs/output_<timestamp>_muse_page1.md`
