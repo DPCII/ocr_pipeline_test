@@ -1,0 +1,107 @@
+"""End-to-end Pipeline: VLM Architect + Spatial Scribe Extractor."""
+
+import json
+from pathlib import Path
+import time
+from typing import Any
+
+from ocr_pipeline_test.render import render_page_to_base64, get_pdf_page_count
+from spatial_guided_ocr.architect import SectionBox, detect_page_sections
+from spatial_guided_ocr.scribe import extract_all_sections
+from spatial_guided_ocr.assembler import assemble_categorized_markdown
+
+
+def run_spatial_guided_pipeline(
+    pdf_path: Path | str,
+    output_path: Path | str,
+    model_name: str = "gemma4:12b",
+    backend: str = "ollama",
+    pages: list[int] | None = None,
+    dpi: int = 150,
+    show_thinking: bool = False,
+) -> dict[str, Any]:
+    """Execute VLM-Guided Spatial Extraction:
+
+    Stage 1: VLM detects visual layout bounding boxes & thread IDs.
+    Stage 2: PyMuPDF clips 100% verbatim text from those spatial coordinates.
+    Stage 3: Assembler groups text by Category & Thread into structured Markdown.
+    """
+    pdf_file = Path(pdf_path)
+    out_file = Path(output_path)
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+
+    total_pages = get_pdf_page_count(pdf_file)
+    target_pages = pages if pages is not None else list(range(total_pages))
+
+    # Normalize backend and model names
+    if backend == "muse" and model_name.lower() in ("muse", "auto", "", "gemma4:12b"):
+        model_name = "muse-spark-1.3-contributor"
+    elif backend == "gemini" and model_name.lower() in ("gemini", "auto", "", "gemma4:12b"):
+        model_name = "gemini-3.8-flash"
+    elif model_name.lower() == "muse":
+        model_name = "muse-spark-1.3-contributor"
+        backend = "muse"
+
+    print("=" * 65)
+    print(f"▶ Running Spatial-Guided Pipeline ({model_name} + Spatial Scribe)")
+    print(f"  Input: {pdf_file.name} ({len(target_pages)} pages) | Model: {model_name} ({backend})")
+    print("=" * 65)
+
+    start_total = time.time()
+    all_boxes: list[SectionBox] = []
+
+    # Stage 1: Architect (VLM detects layout boxes per page)
+    vlm_start = time.time()
+    for p in target_pages:
+        img_b64 = render_page_to_base64(pdf_file, page_number=p, dpi=dpi)
+        page_boxes = detect_page_sections(
+            img_b64=img_b64,
+            page_number=p,
+            model_name=model_name,
+            backend=backend,
+            show_thinking=show_thinking,
+        )
+        all_boxes.extend(page_boxes)
+    vlm_elapsed = time.time() - vlm_start
+
+    # Save layout schema to JSON for inspection
+    layout_json_file = out_file.with_name(f"{out_file.stem}_layout.json")
+    boxes_data = [
+        {
+            "category": b.category,
+            "label": b.label,
+            "thread_id": b.thread_id,
+            "order": b.order,
+            "page_number": b.page_number + 1,
+            "box_2d": b.box_2d,
+        }
+        for b in all_boxes
+    ]
+    layout_json_file.write_text(json.dumps(boxes_data, indent=2), encoding="utf-8")
+    print(f"[Architect] Layout schema saved -> {layout_json_file} ({vlm_elapsed:.2f}s)")
+
+    # Stage 2: Scribe (Mechanical verbatim text extraction)
+    scribe_start = time.time()
+    print(f"[Scribe] Extracting verbatim text from {len(all_boxes)} bounding boxes via PyMuPDF...")
+    extracted_sections = extract_all_sections(pdf_file, all_boxes)
+    scribe_elapsed = time.time() - scribe_start
+    print(f"[Scribe] Extraction completed in {scribe_elapsed * 1000:.1f}ms.")
+
+    # Stage 3: Assembler (Markdown generation by category & thread)
+    markdown_content = assemble_categorized_markdown(extracted_sections)
+    out_file.write_text(markdown_content, encoding="utf-8")
+
+    total_elapsed = time.time() - start_total
+    print(f"\n[Success] Generated Categorized Markdown -> {out_file}")
+    print(f"  Total time: {total_elapsed:.2f}s (VLM Architect: {vlm_elapsed:.2f}s, Scribe: {scribe_elapsed:.3f}s)")
+
+    return {
+        "pipeline": f"Spatial Guided ({model_name} + Scribe)",
+        "output_file": str(out_file),
+        "layout_json": str(layout_json_file),
+        "sections_count": len(all_boxes),
+        "vlm_elapsed": vlm_elapsed,
+        "scribe_elapsed": scribe_elapsed,
+        "total_elapsed": total_elapsed,
+        "content": markdown_content,
+    }

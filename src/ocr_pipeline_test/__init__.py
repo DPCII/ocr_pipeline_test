@@ -17,7 +17,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--pipeline",
-        choices=["all", "gemma", "docling", "gemini", "evaluate"],
+        choices=["all", "gemma", "docling", "gemini", "muse", "evaluate"],
         default="all",
         help="Which pipeline to execute (default: all)",
     )
@@ -108,6 +108,17 @@ def main() -> None:
         except Exception as err:
             print(f"[Pipeline C ERROR]: {err}")
 
+    # Pipeline C2: Remote Muse Spark 1.3
+    if args.pipeline in ("all", "muse"):
+        print("\n" + "=" * 60)
+        print("▶ Running Pipeline C2: Remote Muse Spark 1.3 (Meta API)")
+        print("=" * 60)
+        try:
+            from ocr_pipeline_test.pipeline_muse import run_muse_pipeline
+            run_muse_pipeline(pdf_path, output_dir, pages=target_pages)
+        except Exception as err:
+            print(f"[Pipeline Muse ERROR]: {err}")
+
     # Evaluation phase
     if args.pipeline in ("all", "evaluate"):
         print("\n" + "=" * 60)
@@ -117,6 +128,7 @@ def main() -> None:
             output_dir / f"pipeline_a_gemma4_{eval_suffix}.md",
             output_dir / f"pipeline_b_docling_{eval_suffix}.md",
             output_dir / f"pipeline_c_gemini38_{eval_suffix}.md",
+            output_dir / f"pipeline_c2_muse_{eval_suffix}.md",
         ]
         # Also include page 1 files if full not yet evaluated
         eval_results = []

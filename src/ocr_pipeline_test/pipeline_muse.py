@@ -1,14 +1,13 @@
-"""Pipeline C: Remote Frontier Multimodal API (Gemini 3.8 Flash) via HTTP."""
+"""Pipeline C2: Remote Frontier Multimodal API (Muse Spark 1.3) via Meta API."""
 
 import os
 from pathlib import Path
 import time
+from typing import Any
 from dotenv import load_dotenv
 import httpx
-from typing import Any
 from ocr_pipeline_test.render import render_page_to_base64
 
-# Ensure .env is loaded
 load_dotenv()
 
 PROMPT_TEMPLATE = """You are a state-of-the-art document layout intelligence and transcription engine.
@@ -23,65 +22,73 @@ CRITICAL LAYOUT & STRUCTURAL REQUIREMENTS:
 """
 
 
-def transcribe_page_gemini(
+def transcribe_page_muse(
     pdf_path: Path | str,
     page_number: int,
-    model_name: str = "gemini-3.8-flash",
+    model_name: str = "muse-spark-1.3-contributor",
+    base_url: str = "https://api.meta.ai/v1",
     api_key: str | None = None,
     timeout_seconds: float = 60.0,
     dpi: int = 200,
 ) -> tuple[str, float]:
-    """Transcribe a single page using Gemini 3.8 Flash via HTTP. Returns (content, elapsed_seconds)."""
-    key = api_key or os.getenv("GEMINI_API_KEY")
-    if not key:
-        raise ValueError("GEMINI_API_KEY is not set in environment or .env file.")
+    """Transcribe a single page using Muse Spark 1.3 via Meta API over HTTP."""
+    if model_name.lower() in ("muse", "auto", ""):
+        model_name = "muse-spark-1.3-contributor"
 
-    print(f"\n[Pipeline C] Rendering page {page_number + 1} of {pdf_path} at {dpi} DPI...")
+    key = api_key or os.getenv("MUSE_API_KEY") or os.getenv("MODEL_API_KEY")
+    if not key:
+        raise ValueError("MUSE_API_KEY (or MODEL_API_KEY) is not set in environment or .env file.")
+
+    print(f"\n[Pipeline Muse] Rendering page {page_number + 1} of {pdf_path} at {dpi} DPI...")
     img_b64 = render_page_to_base64(pdf_path, page_number=page_number, dpi=dpi)
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}"
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
     payload = {
-        "contents": [
+        "model": model_name,
+        "messages": [
             {
-                "parts": [
+                "role": "user",
+                "content": [
                     {
-                        "inline_data": {
-                            "mime_type": "image/png",
-                            "data": img_b64,
-                        }
-                    },
-                    {
+                        "type": "text",
                         "text": PROMPT_TEMPLATE,
                     },
-                ]
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{img_b64}",
+                        },
+                    },
+                ],
             }
         ],
-        "generationConfig": {
-            "temperature": 0.1,
-        },
+        "temperature": 0.1,
     }
 
-    print(f"[Pipeline C] Sending HTTP request to {model_name}...")
+    url = f"{base_url.rstrip('/')}/chat/completions"
+    print(f"[Pipeline Muse] Sending HTTP request to {model_name} at {url}...")
     start_time = time.time()
 
     with httpx.Client(timeout=timeout_seconds) as client:
-        response = client.post(url, json=payload)
+        response = client.post(url, json=payload, headers=headers)
         if response.is_error:
             try:
                 err_data = response.json()
                 err_msg = err_data.get("error", {}).get("message", response.text)
             except Exception:
                 err_msg = response.text
-            raise RuntimeError(f"Gemini API error ({response.status_code}): {err_msg}")
+            raise RuntimeError(f"Meta API error ({response.status_code}): {err_msg}")
         data = response.json()
 
     elapsed = time.time() - start_time
 
-    # Extract text response from Gemini format
     try:
-        content = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        content = data["choices"][0]["message"]["content"].strip()
     except (KeyError, IndexError) as err:
-        raise RuntimeError(f"Unexpected response structure from Gemini API: {data}") from err
+        raise RuntimeError(f"Unexpected response structure from Meta API: {data}") from err
 
     # Strip markdown fences if present
     if content.startswith("```markdown"):
@@ -94,34 +101,39 @@ def transcribe_page_gemini(
     return content, elapsed
 
 
-def run_gemini_pipeline(
+def run_muse_pipeline(
     pdf_path: Path | str,
     output_dir: Path | str,
     pages: list[int] | None = None,
-    model_name: str = "gemini-3.8-flash",
+    model_name: str = "muse-spark-1.3-contributor",
+    base_url: str = "https://api.meta.ai/v1",
     api_key: str | None = None,
     timeout_seconds: float = 60.0,
     dpi: int = 200,
 ) -> dict[str, Any]:
-    """Execute Pipeline C: Remote Gemini 3.8 Flash multimodal API across all or specified pages."""
+    """Execute Pipeline: Remote Muse Spark 1.3 multimodal API across all or specified pages."""
     from ocr_pipeline_test.render import get_pdf_page_count
 
     pdf_file = Path(pdf_path)
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    if model_name.lower() in ("muse", "auto", ""):
+        model_name = "muse-spark-1.3-contributor"
+
     total_pages = get_pdf_page_count(pdf_file)
     target_pages = pages if pages is not None else list(range(total_pages))
 
-    print(f"[Pipeline C] Starting Gemini 3.8 Flash transcription for {len(target_pages)} page(s) of {pdf_file.name}...")
+    print(f"[Pipeline Muse] Starting Muse Spark 1.3 transcription for {len(target_pages)} page(s) of {pdf_file.name}...")
     page_contents: list[str] = []
     total_elapsed = 0.0
 
     for p in target_pages:
-        content, elapsed = transcribe_page_gemini(
+        content, elapsed = transcribe_page_muse(
             pdf_path=pdf_file,
             page_number=p,
             model_name=model_name,
+            base_url=base_url,
             api_key=api_key,
             timeout_seconds=timeout_seconds,
             dpi=dpi,
@@ -129,21 +141,19 @@ def run_gemini_pipeline(
         total_elapsed += elapsed
         page_contents.append(content)
 
-        # Save per-page output
-        page_file = out_dir / f"pipeline_c_gemini38_page{p + 1}.md"
+        page_file = out_dir / f"pipeline_c2_muse_page{p + 1}.md"
         page_file.write_text(content, encoding="utf-8")
-        print(f"[Pipeline C] Page {p + 1} saved -> {page_file} ({elapsed:.1f}s)")
+        print(f"[Pipeline Muse] Page {p + 1} saved -> {page_file} ({elapsed:.1f}s)")
 
-    # Combine all pages if multi-page
-    full_output_file = out_dir / "pipeline_c_gemini38_full.md"
+    full_output_file = out_dir / "pipeline_c2_muse_full.md"
     merged_markdown = "\n\n---\n\n".join(
         f"<!-- Page {p + 1} -->\n\n{text}" for p, text in zip(target_pages, page_contents)
     )
     full_output_file.write_text(merged_markdown, encoding="utf-8")
-    print(f"[Pipeline C] Full document saved -> {full_output_file} (Total time: {total_elapsed:.1f}s)")
+    print(f"[Pipeline Muse] Full document saved -> {full_output_file} (Total time: {total_elapsed:.1f}s)")
 
     return {
-        "pipeline": f"Pipeline C (Remote {model_name})",
+        "pipeline": f"Pipeline C2 (Remote {model_name})",
         "output_file": str(full_output_file),
         "pages_processed": len(target_pages),
         "total_elapsed_seconds": total_elapsed,
