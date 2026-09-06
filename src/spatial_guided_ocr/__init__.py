@@ -13,10 +13,11 @@ def main() -> None:
         description="Spatial Document Intelligence: Layout analysis (Docling / VLM) + Scribe extraction (PyMuPDF & Gemma Image OCR)."
     )
     parser.add_argument(
-        "--pdf",
+        "--input", "-i", "--file", "--pdf",
+        dest="input_path",
         type=str,
         default="multipage_newsletter.pdf",
-        help="Path to PDF document (default: multipage_newsletter.pdf)",
+        help="Path to input document (PDF, DOCX, PPTX, etc.; default: multipage_newsletter.pdf)",
     )
     parser.add_argument(
         "--model",
@@ -73,9 +74,9 @@ def main() -> None:
     )
 
     args = parser.parse_args()
-    pdf_path = Path(args.pdf)
-    if not pdf_path.exists():
-        print(f"Error: File {pdf_path} not found.")
+    input_path = Path(args.input_path)
+    if not input_path.exists():
+        print(f"Error: File {input_path} not found.")
         sys.exit(1)
 
     # Auto-detect backend and normalize model names
@@ -116,7 +117,7 @@ def main() -> None:
 
     try:
         run_spatial_guided_pipeline(
-            pdf_path=pdf_path,
+            input_path=input_path,
             output_path=args.output,
             model_name=model,
             backend=backend,

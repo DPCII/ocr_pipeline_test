@@ -128,7 +128,7 @@ def extract_text_from_section_box(
 
 
 def extract_all_sections(
-    pdf_path: Path | str,
+    input_path: Path | str,
     boxes: list[SectionBox],
     enable_image_ocr: bool = True,
     ocr_model: str = "gemma4:12b",
@@ -142,7 +142,7 @@ def extract_all_sections(
     Uses PyMuPDF for digital text extraction and Gemma (served via Ollama) for image OCR jobs.
     """
     effective_ocr_model = model_name or ocr_model
-    doc = pymupdf.open(str(pdf_path))
+    doc = pymupdf.open(str(input_path))
     extracted_sections: list[dict[str, Any]] = []
 
     for box in boxes:

@@ -24,7 +24,7 @@ CRITICAL LAYOUT & STRUCTURAL REQUIREMENTS:
 
 
 def transcribe_page_gemini(
-    pdf_path: Path | str,
+    input_path: Path | str,
     page_number: int,
     model_name: str = "gemini-3.8-flash",
     api_key: str | None = None,
@@ -36,8 +36,8 @@ def transcribe_page_gemini(
     if not key:
         raise ValueError("GEMINI_API_KEY is not set in environment or .env file.")
 
-    print(f"\n[Pipeline C] Rendering page {page_number + 1} of {pdf_path} at {dpi} DPI...")
-    img_b64 = render_page_to_base64(pdf_path, page_number=page_number, dpi=dpi)
+    print(f"\n[Pipeline C] Rendering page {page_number + 1} of {input_path} at {dpi} DPI...")
+    img_b64 = render_page_to_base64(input_path, page_number=page_number, dpi=dpi)
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:streamGenerateContent?key={key}&alt=sse"
     payload = {
@@ -126,7 +126,7 @@ def transcribe_page_gemini(
 
 
 def run_gemini_pipeline(
-    pdf_path: Path | str,
+    input_path: Path | str,
     output_dir: Path | str,
     pages: list[int] | None = None,
     model_name: str = "gemini-3.8-flash",
@@ -136,23 +136,23 @@ def run_gemini_pipeline(
     timestamp: str | None = None,
 ) -> dict[str, Any]:
     """Execute Pipeline C: Remote Gemini 3.8 Flash multimodal API across all or specified pages."""
-    from ocr_pipeline_test.render import get_pdf_page_count
+    from ocr_pipeline_test.render import get_document_page_count
     from ocr_pipeline_test.output_utils import generate_output_path
 
-    pdf_file = Path(pdf_path)
+    doc_file = Path(input_path)
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    total_pages = get_pdf_page_count(pdf_file)
+    total_pages = get_document_page_count(doc_file)
     target_pages = pages if pages is not None else list(range(total_pages))
 
-    print(f"[Pipeline C] Starting Gemini 3.8 Flash transcription for {len(target_pages)} page(s) of {pdf_file.name}...")
+    print(f"[Pipeline C] Starting Gemini 3.8 Flash transcription for {len(target_pages)} page(s) of {doc_file.name}...")
     page_contents: list[str] = []
     total_elapsed = 0.0
 
     for p in target_pages:
         content, elapsed = transcribe_page_gemini(
-            pdf_path=pdf_file,
+            input_path=doc_file,
             page_number=p,
             model_name=model_name,
             api_key=api_key,

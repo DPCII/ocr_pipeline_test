@@ -300,21 +300,79 @@ _DOCLING_CACHE: dict[str, Any] = {}
 
 
 def detect_sections_with_docling(
-    pdf_path: Path | str,
+    input_path: Path | str,
     page_number: int,
 ) -> list[dict[str, Any]]:
     """Detect section bounding boxes using IBM Docling layout analysis engine."""
     from docling.document_converter import DocumentConverter
 
-    pdf_key = str(Path(pdf_path).resolve())
-    if pdf_key not in _DOCLING_CACHE:
-        print(f"[Architect] Initializing IBM Docling layout engine for {Path(pdf_path).name}...", flush=True)
+    doc_key = str(Path(input_path).resolve())
+    if doc_key not in _DOCLING_CACHE:
+        print(f"[Architect] Initializing IBM Docling layout engine for {Path(input_path).name}...", flush=True)
         converter = DocumentConverter()
-        _DOCLING_CACHE[pdf_key] = converter.convert(pdf_key).document
+        _DOCLING_CACHE[doc_key] = converter.convert(doc_key).document
 
-    doc = _DOCLING_CACHE[pdf_key]
+    doc = _DOCLING_CACHE[doc_key]
     doc_page_no = page_number + 1
     if doc_page_no not in doc.pages:
+        # Fallback to PyMuPDF visual layout block analysis for document formats
+        # without native Docling page geometry (e.g., DOCX, PPTX reflowable pages)
+        import pymupdf
+
+        try:
+            p_doc = pymupdf.open(str(input_path))
+            if page_number < len(p_doc):
+                page = p_doc[page_number]
+                pw, ph = page.rect.width, page.rect.height
+                raw_blocks = page.get_text("blocks")
+                p_doc.close()
+
+                result: list[dict[str, Any]] = []
+                section_counter = 0
+                current_thread_id = f"section_p{doc_page_no}"
+                current_section_label = "General Content"
+                thread_order_counters: dict[str, int] = {}
+
+                for b in raw_blocks:
+                    if len(b) >= 7:
+                        x0, y0, x1, y1, text, _block_no, block_type = b[:7]
+                        text = str(text).strip()
+                        if not text and block_type == 0:
+                            continue
+                        ymin = max(0, min(1000, int((y0 / ph) * 1000)))
+                        ymax = max(0, min(1000, int((y1 / ph) * 1000)))
+                        xmin = max(0, min(1000, int((x0 / pw) * 1000)))
+                        xmax = max(0, min(1000, int((x1 / pw) * 1000)))
+                        if ymin >= ymax or xmin >= xmax:
+                            continue
+
+                        if block_type == 1:
+                            category = "Graphic"
+                            tid = f"figure_p{doc_page_no}_{len(result) + 1}"
+                            lbl = "Figure / Image"
+                        elif len(text.splitlines()) == 1 and len(text) < 60 and not text.endswith((".", ",")):
+                            category = "Section Header"
+                            section_counter += 1
+                            current_thread_id = f"section_{doc_page_no}_{section_counter}"
+                            current_section_label = text
+                            tid = current_thread_id
+                            lbl = text
+                        else:
+                            category = "Main Story"
+                            tid = current_thread_id
+                            lbl = current_section_label
+
+                        thread_order_counters[tid] = thread_order_counters.get(tid, 0) + 1
+                        result.append({
+                            "category": category,
+                            "box_2d": [ymin, xmin, ymax, xmax],
+                            "thread_id": tid,
+                            "order": thread_order_counters[tid],
+                            "label": lbl,
+                        })
+                return result
+        except Exception as exc:
+            print(f"[Architect] Docling layout fallback error: {exc}", flush=True)
         return []
 
     page = doc.pages[doc_page_no]
@@ -405,9 +463,11 @@ def detect_page_sections(
     model_name: str = "docling-layout",
     backend: str = "docling",
     show_thinking: bool = False,
+    input_path: Path | str | None = None,
     pdf_path: Path | str | None = None,
 ) -> list[SectionBox]:
     """Unified entrypoint to detect layout bounding boxes for a single page."""
+    doc_input = input_path or pdf_path
     if backend.lower() in ("docling", "docling-layout", "local") or model_name.lower() in ("docling", "docling-layout"):
         backend = "docling"
         model_name = "docling-layout"
@@ -427,9 +487,9 @@ def detect_page_sections(
 
     print(f"[Architect] Detecting visual sections on Page {page_number + 1} with {model_name} ({backend})...")
     if backend == "docling":
-        if not pdf_path:
-            raise ValueError("pdf_path is required for Docling layout detection")
-        raw_sections = detect_sections_with_docling(pdf_path, page_number)
+        if not doc_input:
+            raise ValueError("input_path is required for Docling layout detection")
+        raw_sections = detect_sections_with_docling(doc_input, page_number)
     elif backend == "gemini":
         raw_sections = detect_sections_with_gemini(img_b64, model_name=model_name, show_thinking=show_thinking)
     elif backend == "muse":

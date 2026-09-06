@@ -5,7 +5,7 @@ from pathlib import Path
 import time
 from typing import Any
 
-from ocr_pipeline_test.render import render_page_to_base64, get_pdf_page_count
+from ocr_pipeline_test.render import render_page_to_base64, get_document_page_count
 from ocr_pipeline_test.output_utils import resolve_output_path
 from spatial_guided_ocr.architect import SectionBox, detect_page_sections
 from spatial_guided_ocr.scribe import extract_all_sections
@@ -13,7 +13,7 @@ from spatial_guided_ocr.assembler import assemble_categorized_markdown
 
 
 def run_spatial_guided_pipeline(
-    pdf_path: Path | str,
+    input_path: Path | str | None = None,
     output_path: Path | str | None = None,
     model_name: str = "docling-layout",
     backend: str = "docling",
@@ -23,6 +23,7 @@ def run_spatial_guided_pipeline(
     enable_image_ocr: bool = True,
     ocr_model: str = "gemma4:12b",
     ollama_url: str = "http://localhost:11434",
+    pdf_path: Path | str | None = None,
 ) -> dict[str, Any]:
     """Execute Spatial Extraction:
 
@@ -30,11 +31,14 @@ def run_spatial_guided_pipeline(
     Stage 2: Scribe (PyMuPDF for digital text; Gemma Vision via Ollama for image OCR) extracts verbatim text.
     Stage 3: Assembler groups text by Category & Thread into structured Markdown.
     """
-    pdf_file = Path(pdf_path)
+    resolved_path = input_path or pdf_path
+    if not resolved_path:
+        raise ValueError("input_path is required for run_spatial_guided_pipeline")
+    doc_file = Path(resolved_path)
     out_file = resolve_output_path(output_path, default_dir="outputs")
     out_file.parent.mkdir(parents=True, exist_ok=True)
 
-    total_pages = get_pdf_page_count(pdf_file)
+    total_pages = get_document_page_count(doc_file)
     target_pages = pages if pages is not None else list(range(total_pages))
 
     # Normalize backend and model names
@@ -53,7 +57,7 @@ def run_spatial_guided_pipeline(
     ocr_info = f" | Image OCR: {ocr_model}" if enable_image_ocr else " | Image OCR: disabled"
     print("=" * 65)
     print(f"▶ Running Spatial-Guided Pipeline (Architect: {model_name}{ocr_info})")
-    print(f"  Input: {pdf_file.name} ({len(target_pages)} pages) | Architect: {model_name} ({backend})")
+    print(f"  Input: {doc_file.name} ({len(target_pages)} pages) | Architect: {model_name} ({backend})")
     print("=" * 65)
 
     start_total = time.time()
@@ -62,14 +66,14 @@ def run_spatial_guided_pipeline(
     # Stage 1: Architect (Layout detection per page)
     vlm_start = time.time()
     for p in target_pages:
-        img_b64 = render_page_to_base64(pdf_file, page_number=p, dpi=dpi)
+        img_b64 = render_page_to_base64(doc_file, page_number=p, dpi=dpi)
         page_boxes = detect_page_sections(
             img_b64=img_b64,
             page_number=p,
             model_name=model_name,
             backend=backend,
             show_thinking=show_thinking,
-            pdf_path=pdf_file,
+            input_path=doc_file,
         )
         all_boxes.extend(page_boxes)
     vlm_elapsed = time.time() - vlm_start
@@ -94,7 +98,7 @@ def run_spatial_guided_pipeline(
     scribe_start = time.time()
     print(f"[Scribe] Extracting text from {len(all_boxes)} bounding boxes...")
     extracted_sections = extract_all_sections(
-        pdf_file,
+        doc_file,
         all_boxes,
         enable_image_ocr=enable_image_ocr,
         ocr_model=ocr_model,

@@ -24,7 +24,7 @@ CRITICAL LAYOUT & STRUCTURAL REQUIREMENTS:
 
 
 def transcribe_page_muse(
-    pdf_path: Path | str,
+    input_path: Path | str,
     page_number: int,
     model_name: str = "muse-spark-1.3-contributor",
     base_url: str = "https://api.meta.ai/v1",
@@ -40,8 +40,8 @@ def transcribe_page_muse(
     if not key:
         raise ValueError("MUSE_API_KEY (or MODEL_API_KEY) is not set in environment or .env file.")
 
-    print(f"\n[Pipeline Muse] Rendering page {page_number + 1} of {pdf_path} at {dpi} DPI...")
-    img_b64 = render_page_to_base64(pdf_path, page_number=page_number, dpi=dpi)
+    print(f"\n[Pipeline Muse] Rendering page {page_number + 1} of {input_path} at {dpi} DPI...")
+    img_b64 = render_page_to_base64(input_path, page_number=page_number, dpi=dpi)
 
     headers = {
         "Authorization": f"Bearer {key}",
@@ -140,7 +140,7 @@ def transcribe_page_muse(
 
 
 def run_muse_pipeline(
-    pdf_path: Path | str,
+    input_path: Path | str,
     output_dir: Path | str,
     pages: list[int] | None = None,
     model_name: str = "muse-spark-1.3-contributor",
@@ -151,26 +151,26 @@ def run_muse_pipeline(
     timestamp: str | None = None,
 ) -> dict[str, Any]:
     """Execute Pipeline: Remote Muse Spark 1.3 multimodal API across all or specified pages."""
-    from ocr_pipeline_test.render import get_pdf_page_count
+    from ocr_pipeline_test.render import get_document_page_count
     from ocr_pipeline_test.output_utils import generate_output_path
 
-    pdf_file = Path(pdf_path)
+    doc_file = Path(input_path)
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if model_name.lower() in ("muse", "auto", ""):
         model_name = "muse-spark-1.3-contributor"
 
-    total_pages = get_pdf_page_count(pdf_file)
+    total_pages = get_document_page_count(doc_file)
     target_pages = pages if pages is not None else list(range(total_pages))
 
-    print(f"[Pipeline Muse] Starting Muse Spark 1.3 transcription for {len(target_pages)} page(s) of {pdf_file.name}...")
+    print(f"[Pipeline Muse] Starting Muse Spark 1.3 transcription for {len(target_pages)} page(s) of {doc_file.name}...")
     page_contents: list[str] = []
     total_elapsed = 0.0
 
     for p in target_pages:
         content, elapsed = transcribe_page_muse(
-            pdf_path=pdf_file,
+            input_path=doc_file,
             page_number=p,
             model_name=model_name,
             base_url=base_url,

@@ -44,7 +44,10 @@ MUSE_API_KEY=your_key_here
 #### Spatial-Guided Hybrid Extraction:
 ```zsh
 # Run spatial-guided OCR (Docling layout + PyMuPDF digital text + Gemma image OCR)
-uv run spatial-ocr --pdf multipage_newsletter.pdf
+uv run spatial-ocr --input multipage_newsletter.pdf
+
+# Run on MS Word or other document formats
+uv run spatial-ocr --input multipage_newsletter.docx
 
 # Quiet mode (suppress live thought streaming from VLMs)
 uv run spatial-ocr --no-thinking
@@ -52,13 +55,13 @@ uv run spatial-ocr --no-thinking
 
 #### Benchmark Comparison Testbed:
 ```zsh
-# Run all benchmark pipelines (Docling, Gemini 3.8 Flash, Muse Spark 1.3)
-uv run ocr-pipeline-test --pipeline all
+# Run all benchmark pipelines on PDF, DOCX, etc.
+uv run ocr-pipeline-test --pipeline all --input multipage_newsletter.docx
 
 # Run individual pipelines:
-uv run ocr-pipeline-test --pipeline docling
-uv run ocr-pipeline-test --pipeline gemini
-uv run ocr-pipeline-test --pipeline muse
+uv run ocr-pipeline-test --pipeline docling --input multipage_newsletter.docx
+uv run ocr-pipeline-test --pipeline gemini --input multipage_newsletter.pdf
+uv run ocr-pipeline-test --pipeline muse --input multipage_newsletter.pdf
 
 # Re-run evaluation on existing outputs
 uv run ocr-pipeline-test --pipeline evaluate

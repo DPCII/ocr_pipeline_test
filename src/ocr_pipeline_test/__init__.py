@@ -21,16 +21,17 @@ def main() -> None:
         help="Which pipeline to execute (default: all)",
     )
     parser.add_argument(
-        "--pdf",
+        "--input", "-i", "--file", "--pdf",
+        dest="input_path",
         type=str,
         default="multipage_newsletter.pdf",
-        help="Path to the PDF input document (default: multipage_newsletter.pdf)",
+        help="Path to input document (PDF, DOCX, PPTX, XLSX, etc.; default: multipage_newsletter.pdf)",
     )
     parser.add_argument(
         "--docx",
         type=str,
-        default="multipage_newsletter.docx",
-        help="Path to the DOCX input document for Docling (default: multipage_newsletter.docx)",
+        default=None,
+        help="Path to DOCX input document (shortcut for --input)",
     )
     parser.add_argument(
         "--page",
@@ -51,12 +52,12 @@ def main() -> None:
     )
 
     args = parser.parse_args()
-    pdf_path = Path(args.pdf)
+    input_path = Path(args.docx if args.docx else args.input_path)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    if not pdf_path.exists():
-        print(f"Error: Input PDF {pdf_path} not found.")
+    if not input_path.exists():
+        print(f"Error: Input document {input_path} not found.")
         sys.exit(1)
 
     # Determine pages to process
@@ -81,7 +82,7 @@ def main() -> None:
         print("▶ Running Pipeline B: Local IBM Docling Layout Intelligence")
         print("=" * 60)
         try:
-            run_docling_pipeline(pdf_path, output_dir, pages=target_pages, timestamp=run_ts)
+            run_docling_pipeline(input_path, output_dir, pages=target_pages, timestamp=run_ts)
         except Exception as err:
             print(f"[Pipeline B ERROR]: {err}")
 
@@ -91,7 +92,7 @@ def main() -> None:
         print("▶ Running Pipeline C: Remote Gemini 3.8 Flash (HTTP API)")
         print("=" * 60)
         try:
-            run_gemini_pipeline(pdf_path, output_dir, pages=target_pages, timestamp=run_ts)
+            run_gemini_pipeline(input_path, output_dir, pages=target_pages, timestamp=run_ts)
         except Exception as err:
             print(f"[Pipeline C ERROR]: {err}")
 
@@ -102,7 +103,7 @@ def main() -> None:
         print("=" * 60)
         try:
             from ocr_pipeline_test.pipeline_muse import run_muse_pipeline
-            run_muse_pipeline(pdf_path, output_dir, pages=target_pages, timestamp=run_ts)
+            run_muse_pipeline(input_path, output_dir, pages=target_pages, timestamp=run_ts)
         except Exception as err:
             print(f"[Pipeline Muse ERROR]: {err}")
 
