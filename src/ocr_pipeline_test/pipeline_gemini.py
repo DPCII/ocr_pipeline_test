@@ -39,7 +39,7 @@ def transcribe_page_gemini(
     print(f"\n[Pipeline C] Rendering page {page_number + 1} of {pdf_path} at {dpi} DPI...")
     img_b64 = render_page_to_base64(pdf_path, page_number=page_number, dpi=dpi)
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:streamGenerateContent?key={key}&alt=sse"
     payload = {
         "contents": [
             {
@@ -61,27 +61,58 @@ def transcribe_page_gemini(
         },
     }
 
-    print(f"[Pipeline C] Sending HTTP request to {model_name}...")
+    print(f"[Pipeline C] Streaming reasoning & transcription from {model_name}...")
     start_time = time.time()
 
-    with httpx.Client(timeout=timeout_seconds) as client:
-        response = client.post(url, json=payload)
-        if response.is_error:
-            try:
-                err_data = response.json()
-                err_msg = err_data.get("error", {}).get("message", response.text)
-            except Exception:
-                err_msg = response.text
-            raise RuntimeError(f"Gemini API error ({response.status_code}): {err_msg}")
-        data = response.json()
+    thought_chunks: list[str] = []
+    content_chunks: list[str] = []
+    in_thinking = True
+    import sys
+
+    timeout = httpx.Timeout(timeout_seconds, connect=30.0)
+    with httpx.Client(timeout=timeout) as client:
+        with client.stream("POST", url, json=payload) as response:
+            if response.is_error:
+                response.read()
+                try:
+                    err_data = response.json()
+                    err_msg = err_data.get("error", {}).get("message", response.text)
+                except Exception:
+                    err_msg = response.text
+                raise RuntimeError(f"Gemini API error ({response.status_code}): {err_msg}")
+
+            for line in response.iter_lines():
+                if not line or not line.startswith("data: "):
+                    continue
+                data_str = line[6:].strip()
+                try:
+                    data = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
+
+                candidates = data.get("candidates", [])
+                if not candidates:
+                    continue
+                parts = candidates[0].get("content", {}).get("parts", [])
+                for p in parts:
+                    txt = p.get("text", "")
+                    is_thought = p.get("thought", False)
+                    if is_thought:
+                        thought_chunks.append(txt)
+                        sys.stdout.write(txt)
+                        sys.stdout.flush()
+                    else:
+                        if in_thinking and thought_chunks:
+                            in_thinking = False
+                            print("\n=== [End Gemini Reasoning - Begin Markdown Output] ===\n", flush=True)
+                        content_chunks.append(txt)
+                        sys.stdout.write(txt)
+                        sys.stdout.flush()
+
+            print()
 
     elapsed = time.time() - start_time
-
-    # Extract text response from Gemini format
-    try:
-        content = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-    except (KeyError, IndexError) as err:
-        raise RuntimeError(f"Unexpected response structure from Gemini API: {data}") from err
+    content = "".join(content_chunks).strip()
 
     # Strip markdown fences if present
     if content.startswith("```markdown"):

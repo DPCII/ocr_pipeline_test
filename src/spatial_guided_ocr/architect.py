@@ -37,7 +37,7 @@ For each section box, return:
    - xmin: left edge (0 = left of page, 1000 = right of page)
    - ymax: bottom edge
    - xmax: right edge
-3. "thread_id": Logical story identifier. If a section continues an article from another column or page (e.g. "main_multipage_text"), use the SAME thread_id.
+3. "thread_id": Logical story/article identifier. If a section continues content from another column or page, use the SAME thread_id.
 4. "order": Reading order number within this thread (1, 2, ...).
 5. "label": Brief description or heading title for this section.
 
@@ -47,9 +47,9 @@ Return ONLY a valid JSON object with the format:
     {
       "category": "Banner",
       "box_2d": [ymin, xmin, ymax, xmax],
-      "thread_id": "banner",
+      "thread_id": "header_thread",
       "order": 1,
-      "label": "Newsletter Title Banner"
+      "label": "Document Header / Title"
     }
   ]
 }
@@ -61,9 +61,12 @@ def detect_sections_with_muse(
     model_name: str = "muse-spark-1.3-contributor",
     base_url: str = "https://api.meta.ai/v1",
     api_key: str | None = None,
-    timeout_seconds: float = 60.0,
+    timeout_seconds: float = 90.0,
+    show_thinking: bool = True,
 ) -> list[dict[str, Any]]:
-    """Detect section bounding boxes using Muse Spark 1.3 via Meta API over HTTP."""
+    """Detect section bounding boxes using Muse Spark 1.3 via Meta API with streaming reasoning/content."""
+    import sys
+
     if model_name.lower() in ("muse", "auto", ""):
         model_name = "muse-spark-1.3-contributor"
 
@@ -95,21 +98,76 @@ def detect_sections_with_muse(
             }
         ],
         "temperature": 0.1,
+        "stream": True,
     }
 
     url = f"{base_url.rstrip('/')}/chat/completions"
-    with httpx.Client(timeout=timeout_seconds) as client:
-        response = client.post(url, json=payload, headers=headers)
-        if response.is_error:
-            try:
-                err_data = response.json()
-                err_msg = err_data.get("error", {}).get("message", response.text)
-            except Exception:
-                err_msg = response.text
-            raise RuntimeError(f"Meta API error ({response.status_code}): {err_msg}")
-        data = response.json()
+    thought_chunks: list[str] = []
+    content_chunks: list[str] = []
+    in_thinking_phase = True
 
-    content = data["choices"][0]["message"]["content"].strip()
+    timeout = httpx.Timeout(timeout_seconds, connect=30.0)
+    with httpx.Client(timeout=timeout) as client:
+        with client.stream("POST", url, json=payload, headers=headers) as response:
+            if response.is_error:
+                response.read()
+                try:
+                    err_data = response.json()
+                    err_msg = err_data.get("error", {}).get("message", response.text)
+                except Exception:
+                    err_msg = response.text
+                raise RuntimeError(f"Meta API error ({response.status_code}): {err_msg}")
+
+            if show_thinking:
+                print(f"\n=== [Architect Live Layout Reasoning ({model_name})] ===", flush=True)
+            else:
+                print(f"[Architect] Thinking layout ({model_name}): ", end="", flush=True)
+
+            for line in response.iter_lines():
+                if not line or not line.startswith("data: "):
+                    continue
+                data_str = line[6:].strip()
+                if data_str == "[DONE]":
+                    break
+                try:
+                    data = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
+
+                choices = data.get("choices", [])
+                if not choices:
+                    continue
+                delta = choices[0].get("delta", {})
+
+                thought = delta.get("reasoning_content") or delta.get("thinking") or delta.get("reasoning")
+                content_part = delta.get("content", "")
+
+                if thought:
+                    thought_chunks.append(thought)
+                    if show_thinking:
+                        sys.stdout.write(thought)
+                        sys.stdout.flush()
+                    else:
+                        if len(thought_chunks) % 20 == 0:
+                            print("T", end="", flush=True)
+
+                if content_part:
+                    if in_thinking_phase and thought_chunks:
+                        in_thinking_phase = False
+                        if show_thinking:
+                            print("\n=== [End Layout Reasoning] ===\n", flush=True)
+                        print("[Architect] Generating bounding boxes JSON: ", end="", flush=True)
+                    content_chunks.append(content_part)
+                    if show_thinking:
+                        sys.stdout.write(content_part)
+                        sys.stdout.flush()
+                    else:
+                        if len(content_chunks) % 20 == 0:
+                            print(".", end="", flush=True)
+
+            print()
+
+    content = "".join(content_chunks).strip()
     return _parse_json_sections(content)
 
 
@@ -200,14 +258,17 @@ def detect_sections_with_gemini(
     img_b64: str,
     model_name: str = "gemini-3.8-flash",
     api_key: str | None = None,
-    timeout_seconds: float = 60.0,
+    timeout_seconds: float = 90.0,
+    show_thinking: bool = True,
 ) -> list[dict[str, Any]]:
-    """Detect section bounding boxes using Google Gemini 3.8 Flash via HTTP."""
+    """Detect section bounding boxes using Google Gemini 3.8 Flash via SSE streaming."""
+    import sys
+
     key = api_key or os.getenv("GEMINI_API_KEY")
     if not key:
         raise ValueError("GEMINI_API_KEY is not set in environment or .env")
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:streamGenerateContent?key={key}&alt=sse"
     payload = {
         "contents": [
             {
@@ -230,18 +291,68 @@ def detect_sections_with_gemini(
         },
     }
 
-    with httpx.Client(timeout=timeout_seconds) as client:
-        response = client.post(url, json=payload)
-        if response.is_error:
-            try:
-                err_data = response.json()
-                err_msg = err_data.get("error", {}).get("message", response.text)
-            except Exception:
-                err_msg = response.text
-            raise RuntimeError(f"Gemini API error ({response.status_code}): {err_msg}")
-        data = response.json()
+    thought_chunks: list[str] = []
+    content_chunks: list[str] = []
+    in_thinking_phase = True
 
-    content = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    timeout = httpx.Timeout(timeout_seconds, connect=30.0)
+    with httpx.Client(timeout=timeout) as client:
+        with client.stream("POST", url, json=payload) as response:
+            if response.is_error:
+                response.read()
+                try:
+                    err_data = response.json()
+                    err_msg = err_data.get("error", {}).get("message", response.text)
+                except Exception:
+                    err_msg = response.text
+                raise RuntimeError(f"Gemini API error ({response.status_code}): {err_msg}")
+
+            if show_thinking:
+                print(f"\n=== [Architect Live Layout Reasoning ({model_name})] ===", flush=True)
+            else:
+                print(f"[Architect] Thinking layout ({model_name}): ", end="", flush=True)
+
+            for line in response.iter_lines():
+                if not line or not line.startswith("data: "):
+                    continue
+                data_str = line[6:].strip()
+                try:
+                    data = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
+
+                candidates = data.get("candidates", [])
+                if not candidates:
+                    continue
+                parts = candidates[0].get("content", {}).get("parts", [])
+                for p in parts:
+                    txt = p.get("text", "")
+                    is_thought = p.get("thought", False)
+                    if is_thought:
+                        thought_chunks.append(txt)
+                        if show_thinking:
+                            sys.stdout.write(txt)
+                            sys.stdout.flush()
+                        else:
+                            if len(thought_chunks) % 20 == 0:
+                                print("T", end="", flush=True)
+                    else:
+                        if in_thinking_phase and thought_chunks:
+                            in_thinking_phase = False
+                            if show_thinking:
+                                print("\n=== [End Layout Reasoning] ===\n", flush=True)
+                            print("[Architect] Generating bounding boxes JSON: ", end="", flush=True)
+                        content_chunks.append(txt)
+                        if show_thinking:
+                            sys.stdout.write(txt)
+                            sys.stdout.flush()
+                        else:
+                            if len(content_chunks) % 20 == 0:
+                                print(".", end="", flush=True)
+
+            print()
+
+    content = "".join(content_chunks).strip()
     return _parse_json_sections(content)
 
 
@@ -284,9 +395,9 @@ def detect_page_sections(
 
     print(f"[Architect] Detecting visual sections on Page {page_number + 1} with {model_name} ({backend})...")
     if backend.lower() == "gemini" or "gemini" in model_name.lower():
-        raw_sections = detect_sections_with_gemini(img_b64, model_name=model_name)
+        raw_sections = detect_sections_with_gemini(img_b64, model_name=model_name, show_thinking=show_thinking)
     elif backend.lower() == "muse" or "muse" in model_name.lower():
-        raw_sections = detect_sections_with_muse(img_b64, model_name=model_name)
+        raw_sections = detect_sections_with_muse(img_b64, model_name=model_name, show_thinking=show_thinking)
     else:
         raw_sections = detect_sections_with_ollama(
             img_b64,

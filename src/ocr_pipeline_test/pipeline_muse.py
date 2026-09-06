@@ -1,5 +1,6 @@
 """Pipeline C2: Remote Frontier Multimodal API (Muse Spark 1.3) via Meta API."""
 
+import json
 import os
 from pathlib import Path
 import time
@@ -66,29 +67,66 @@ def transcribe_page_muse(
             }
         ],
         "temperature": 0.1,
+        "stream": True,
     }
 
     url = f"{base_url.rstrip('/')}/chat/completions"
-    print(f"[Pipeline Muse] Sending HTTP request to {model_name} at {url}...")
+    print(f"[Pipeline Muse] Streaming reasoning & transcription from {model_name}...")
     start_time = time.time()
 
-    with httpx.Client(timeout=timeout_seconds) as client:
-        response = client.post(url, json=payload, headers=headers)
-        if response.is_error:
-            try:
-                err_data = response.json()
-                err_msg = err_data.get("error", {}).get("message", response.text)
-            except Exception:
-                err_msg = response.text
-            raise RuntimeError(f"Meta API error ({response.status_code}): {err_msg}")
-        data = response.json()
+    thought_chunks: list[str] = []
+    content_chunks: list[str] = []
+    in_thinking = True
+    import sys
+
+    timeout = httpx.Timeout(timeout_seconds, connect=30.0)
+    with httpx.Client(timeout=timeout) as client:
+        with client.stream("POST", url, json=payload, headers=headers) as response:
+            if response.is_error:
+                response.read()
+                try:
+                    err_data = response.json()
+                    err_msg = err_data.get("error", {}).get("message", response.text)
+                except Exception:
+                    err_msg = response.text
+                raise RuntimeError(f"Meta API error ({response.status_code}): {err_msg}")
+
+            for line in response.iter_lines():
+                if not line or not line.startswith("data: "):
+                    continue
+                data_str = line[6:].strip()
+                if data_str == "[DONE]":
+                    break
+                try:
+                    data = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
+
+                choices = data.get("choices", [])
+                if not choices:
+                    continue
+                delta = choices[0].get("delta", {})
+
+                thought = delta.get("reasoning_content") or delta.get("thinking") or delta.get("reasoning")
+                content_part = delta.get("content", "")
+
+                if thought:
+                    thought_chunks.append(thought)
+                    sys.stdout.write(thought)
+                    sys.stdout.flush()
+
+                if content_part:
+                    if in_thinking and thought_chunks:
+                        in_thinking = False
+                        print("\n=== [End Muse Reasoning - Begin Markdown Output] ===\n", flush=True)
+                    content_chunks.append(content_part)
+                    sys.stdout.write(content_part)
+                    sys.stdout.flush()
+
+            print()
 
     elapsed = time.time() - start_time
-
-    try:
-        content = data["choices"][0]["message"]["content"].strip()
-    except (KeyError, IndexError) as err:
-        raise RuntimeError(f"Unexpected response structure from Meta API: {data}") from err
+    content = "".join(content_chunks).strip()
 
     # Strip markdown fences if present
     if content.startswith("```markdown"):

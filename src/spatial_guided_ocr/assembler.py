@@ -14,9 +14,9 @@ def assemble_categorized_markdown(extracted_sections: list[dict[str, Any]]) -> s
     for s in valid_sections:
         threads[s["thread_id"]].append(s)
 
-    # Sort items within each thread by their order and page number
+    # Sort items within each thread by page number then sequential order
     for tid in threads:
-        threads[tid].sort(key=lambda item: (item.get("order", 1), item.get("page_number", 1)))
+        threads[tid].sort(key=lambda item: (item.get("page_number", 1), item.get("order", 1)))
 
     markdown_parts: list[str] = []
 

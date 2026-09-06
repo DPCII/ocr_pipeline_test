@@ -19,3 +19,7 @@ Before returning a response to the user:
 1. Did I verify the current system date/year?
 2. Are all proposed model names and tool versions current (2026 standard)?
 3. Are any legacy or deprecated technologies accidentally referenced? If so, replace them with current alternatives immediately.
+
+## 4. Reasoning & Token Streaming Observability
+- **Universal Streaming Requirement**: All model executions—both local models (Gemma 4 via Ollama) and remote APIs (Gemini 3.8 Flash, Muse Spark 1.3)—must implement real-time streaming of thinking/reasoning logic and generated tokens to stdout.
+- **Logic Flow Transparency**: Never run remote or local model invocations as silent blocking HTTP calls. Expose live reasoning/thought deltas and generation progress so the user can observe the reasoning process and verify progress continuously.

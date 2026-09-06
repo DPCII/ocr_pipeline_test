@@ -45,7 +45,14 @@ def main() -> None:
     parser.add_argument(
         "--show-thinking",
         action="store_true",
-        help="Stream the VLM's live layout reasoning trace directly to stdout",
+        default=True,
+        help="Stream the VLM's live layout reasoning trace directly to stdout (default: True)",
+    )
+    parser.add_argument(
+        "--no-thinking",
+        dest="show_thinking",
+        action="store_false",
+        help="Suppress streaming of the live reasoning trace",
     )
 
     args = parser.parse_args()
