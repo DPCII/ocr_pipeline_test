@@ -55,3 +55,24 @@ def resolve_output_path(
 
     # User provided an explicit file path
     return p
+
+
+def prepend_tools_header(
+    content: str,
+    tools: list[str],
+    input_path: Path | str | None = None,
+) -> str:
+    """Ensure the output markdown starts with standardized 'Tools: ...' and 'Input: ...' lines."""
+    tools_str = ", ".join(tools)
+    header_lines = [f"Tools: {tools_str}"]
+    if input_path:
+        header_lines.append(f"Input: {Path(input_path).name}")
+    header = "\n".join(header_lines)
+
+    lines = content.splitlines()
+    idx = 0
+    while idx < len(lines) and (lines[idx].startswith("Tools:") or lines[idx].startswith("Input:")):
+        idx += 1
+
+    clean_remaining = "\n".join(lines[idx:]).lstrip("\r\n")
+    return f"{header}\n\n{clean_remaining}"

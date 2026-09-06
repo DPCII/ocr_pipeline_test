@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 from ocr_pipeline_test.render import render_page_to_base64, get_document_page_count
-from ocr_pipeline_test.output_utils import resolve_output_path
+from ocr_pipeline_test.output_utils import resolve_output_path, prepend_tools_header
 from spatial_guided_ocr.architect import SectionBox, detect_page_sections
 from spatial_guided_ocr.scribe import extract_all_sections
 from spatial_guided_ocr.assembler import assemble_categorized_markdown
@@ -109,7 +109,24 @@ def run_spatial_guided_pipeline(
 
     # Stage 3: Assembler (Markdown generation by category & thread)
     markdown_content = assemble_categorized_markdown(extracted_sections)
-    out_file.write_text(markdown_content, encoding="utf-8")
+
+    # Determine tools used
+    tools_used = ["PyMuPDF"]
+    if backend == "docling":
+        tools_used.append("IBM Docling")
+    elif backend == "gemini":
+        tools_used.append("Gemini 3.8 Flash")
+    elif backend == "muse":
+        tools_used.append("Muse Spark 1.3")
+    else:
+        tools_used.append(model_name)
+
+    if enable_image_ocr:
+        ocr_label = "Gemma 4 (12B via Ollama)" if "gemma" in ocr_model.lower() else f"{ocr_model} (via Ollama)"
+        tools_used.append(ocr_label)
+
+    markdown_with_header = prepend_tools_header(markdown_content, tools_used, input_path=doc_file)
+    out_file.write_text(markdown_with_header, encoding="utf-8")
 
     total_elapsed = time.time() - start_total
     print(f"\n[Success] Generated Categorized Markdown -> {out_file}")

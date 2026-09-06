@@ -137,7 +137,7 @@ def run_gemini_pipeline(
 ) -> dict[str, Any]:
     """Execute Pipeline C: Remote Gemini 3.8 Flash multimodal API across all or specified pages."""
     from ocr_pipeline_test.render import get_document_page_count
-    from ocr_pipeline_test.output_utils import generate_output_path
+    from ocr_pipeline_test.output_utils import generate_output_path, prepend_tools_header
 
     doc_file = Path(input_path)
     out_dir = Path(output_dir)
@@ -145,6 +145,8 @@ def run_gemini_pipeline(
 
     total_pages = get_document_page_count(doc_file)
     target_pages = pages if pages is not None else list(range(total_pages))
+
+    tools_used = ["PyMuPDF", "Gemini 3.8 Flash"]
 
     print(f"[Pipeline C] Starting Gemini 3.8 Flash transcription for {len(target_pages)} page(s) of {doc_file.name}...")
     page_contents: list[str] = []
@@ -162,9 +164,9 @@ def run_gemini_pipeline(
         total_elapsed += elapsed
         page_contents.append(content)
 
-        # Save per-page output
+        # Save per-page output with Tools & Input header
         page_file = generate_output_path(out_dir, suffix=f"gemini38_page{p + 1}", timestamp=timestamp)
-        page_file.write_text(content, encoding="utf-8")
+        page_file.write_text(prepend_tools_header(content, tools_used, input_path=doc_file), encoding="utf-8")
         print(f"[Pipeline C] Page {p + 1} saved -> {page_file} ({elapsed:.1f}s)")
 
     # Combine all pages if multi-page
@@ -172,7 +174,7 @@ def run_gemini_pipeline(
     merged_markdown = "\n\n---\n\n".join(
         f"<!-- Page {p + 1} -->\n\n{text}" for p, text in zip(target_pages, page_contents)
     )
-    full_output_file.write_text(merged_markdown, encoding="utf-8")
+    full_output_file.write_text(prepend_tools_header(merged_markdown, tools_used, input_path=doc_file), encoding="utf-8")
     print(f"[Pipeline C] Full document saved -> {full_output_file} (Total time: {total_elapsed:.1f}s)")
 
     return {

@@ -4,7 +4,7 @@ from pathlib import Path
 import time
 from typing import Any
 from docling.document_converter import DocumentConverter
-from ocr_pipeline_test.output_utils import generate_output_path
+from ocr_pipeline_test.output_utils import generate_output_path, prepend_tools_header
 
 
 def run_docling_pipeline(
@@ -29,21 +29,21 @@ def run_docling_pipeline(
     conv_result = converter.convert(str(in_file))
     elapsed = time.time() - start_time
 
-    # Export markdown
-    markdown_content = conv_result.document.export_to_markdown()
+    # Export markdown and prepend standardized Tools & Input header
+    raw_markdown = conv_result.document.export_to_markdown()
+    markdown_content = prepend_tools_header(raw_markdown, ["IBM Docling"], input_path=in_file)
 
-    # Save full document
-    full_out_file = generate_output_path(out_dir, suffix="docling_full", timestamp=timestamp)
-    full_out_file.write_text(markdown_content, encoding="utf-8")
+    # Determine output suffix based on targeted pages
+    is_page1_only = pages is not None and pages == [0]
+    out_suffix = "docling_page1" if is_page1_only else "docling_full"
 
-    # Also save page 1 alias for evaluate harness
-    page1_file = generate_output_path(out_dir, suffix="docling_page1", timestamp=timestamp)
-    page1_file.write_text(markdown_content, encoding="utf-8")
+    out_file = generate_output_path(out_dir, suffix=out_suffix, timestamp=timestamp)
+    out_file.write_text(markdown_content, encoding="utf-8")
 
-    print(f"[Pipeline B] Completed in {elapsed:.2f}s -> Saved to {full_out_file}")
+    print(f"[Pipeline B] Completed in {elapsed:.2f}s -> Saved to {out_file}")
     return {
         "pipeline": "Pipeline B (IBM Docling)",
-        "output_file": str(full_out_file),
+        "output_file": str(out_file),
         "elapsed_seconds": elapsed,
         "content": markdown_content,
     }
