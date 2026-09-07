@@ -1,12 +1,11 @@
 # Document Intelligence & OCR Pipeline Benchmark
 
-A reproducible, high-accuracy document intelligence testbed on macOS (Apple Silicon M3, 18GB unified memory) comparing local vision models, dedicated layout engines, and frontier multimodal APIs.
+A reproducible, high-accuracy document intelligence testbed.
 
 ## Objectives
 - Accurately convert complex multi-column documents (e.g. `multipage_newsletter.pdf` and `multipage_newsletter.docx`) into semantic Markdown.
 - Strict reading order preservation (column 1 followed by column 2, no cross-column text bleed).
 - Section bounding box isolation (keeping sidebars, banners, and article bodies isolated).
-- Zero reliance on legacy OCR tools (e.g., Tesseract).
 
 ---
 
