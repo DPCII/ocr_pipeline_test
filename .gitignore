@@ -14,3 +14,6 @@ __pycache__/
 # Generated outputs
 outputs/
 test_sips.png
+
+# Developer notes
+.notes/
